@@ -206,14 +206,6 @@
                 <span class="stat-label">商品总数:</span>
                 <span class="stat-value" id="totalCount">0</span>
             </div>
-            <div class="stat-item">
-                <span class="stat-label">总库存:</span>
-                <span class="stat-value" id="totalStock">0</span>
-            </div>
-            <div class="stat-item">
-                <span class="stat-label">总售出:</span>
-                <span class="stat-value" id="totalSold">0</span>
-            </div>
         </div>
 
         <div class="table-container">
@@ -367,10 +359,6 @@
         // ── 统计 ──────────────────────────────────────────────
         function updateStats() {
             document.getElementById('totalCount').textContent = products.length;
-            const totalStock = products.reduce((s, p) => s + (parseFloat(p['库存']) || 0), 0);
-            const totalSold  = products.reduce((s, p) => s + (parseFloat(p['售出']) || 0), 0);
-            document.getElementById('totalStock').textContent = totalStock;
-            document.getElementById('totalSold').textContent  = totalSold;
         }
 
         // ── 渲染 ──────────────────────────────────────────────
