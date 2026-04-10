@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商品数据查询系统</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .toolbar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 10px 36px 10px 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        /* 搜索loading指示器 */
+        .search-loading {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e8e8e8;
+            border-top-color: #1890ff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: none;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .search-box.loading .search-loading { display: block; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .btn-primary { background: #1890ff; color: white; }
+        .btn-primary:hover { background: #40a9ff; }
+        .btn-secondary { background: #52c41a; color: white; }
+        .btn-secondary:hover { background: #73d13d; }
+        .btn-warning { background: #faad14; color: white; }
+        .btn-warning:hover { background: #ffc53d; }
+        .btn-danger { background: #ff4d4f; color: white; }
+        .btn-danger:hover { background: #ff7875; }
+        input[type="file"] { display: none; }
+        .stats {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .stat-item { display: flex; align-items: center; gap: 8px; }
+        .stat-label { color: #666; font-size: 14px; }
+        .stat-value { color: #1890ff; font-size: 20px; font-weight: bold; }
+        .table-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            background: #fafafa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #e8e8e8;
+            white-space: nowrap;
+        }
+        td { padding: 12px; border-bottom: 1px solid #e8e8e8; font-size: 14px; }
+        tr:hover { background: #f5f5f5; }
+        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
+        .empty-state svg { width: 80px; height: 80px; margin-bottom: 20px; opacity: 0.5; }
+        .message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 6px;
+            color: white;
+            font-size: 14px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .message.success { background: #52c41a; }
+        .message.error { background: #ff4d4f; }
+        .message.info { background: #1890ff; }
+        .highlight {
+            background: #ffe58f;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        /* 分页控件 */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-top: 1px solid #e8e8e8;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .pagination-info { color: #666; font-size: 13px; }
+        .pagination-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .page-btn {
+            padding: 5px 12px;
+            border: 1px solid #d9d9d9;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .page-btn:hover:not(:disabled) { border-color: #1890ff; color: #1890ff; }
+        .page-btn.active { background: #1890ff; border-color: #1890ff; color: white; }
+        .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .page-size-select {
+            padding: 5px 8px;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 商品数据查询系统</h1>
+        
+        <div class="toolbar">
+            <div class="search-box" id="searchBox">
+                <input type="text" id="searchInput" placeholder="🔍 搜索条码、货号、名称、规格、类别...">
+                <div class="search-loading"></div>
+            </div>
+            <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">
+                📥 导入Excel
+            </button>
+            <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="importExcel(event)">
+            <button class="btn btn-primary" onclick="exportExcel()">📤 导出Excel</button>
+            <button class="btn btn-warning" onclick="downloadTemplate()">📋 下载模板</button>
+            <button class="btn btn-danger" onclick="clearAllData()">🗑️ 清空数据</button>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <span class="stat-label">商品总数:</span>
+                <span class="stat-value" id="totalCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">总库存:</span>
+                <span class="stat-value" id="totalStock">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">总售出:</span>
+                <span class="stat-value" id="totalSold">0</span>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table id="productTable">
+                <thead>
+                    <tr>
+                        <th>条码</th>
+                        <th>货号</th>
+                        <th>名称</th>
+                        <th>规格</th>
+                        <th>类别</th>
+                        <th>库存</th>
+                        <th>售出</th>
+                        <th>单位</th>
+                        <th>会员价</th>
+                        <th>零售价</th>
+                        <th>进价</th>
+                        <th>打折</th>
+                        <th>积分</th>
+                        <th>更新</th>
+                        <th>过期日期</th>
+                        <th>备注</th>
+                    </tr>
+                </thead>
+                <tbody id="productTableBody">
+                    <tr>
+                        <td colspan="16" class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            <p>暂无数据，请导入Excel文件或下载模板</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <!-- 分页控件 -->
+            <div class="pagination" id="paginationBar" style="display:none;">
+                <div class="pagination-info" id="pageInfo">共 0 条</div>
+                <div class="pagination-btns" id="pageBtns"></div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:13px;color:#666;">每页</span>
+                    <select class="page-size-select" id="pageSizeSelect" onchange="changePageSize(this.value)">
+                        <option value="50">50</option>
+                        <option value="100" selected>100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                    </select>
+                    <span style="font-size:13px;color:#666;">条</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ── 状态 ──────────────────────────────────────────────
+        let products = [];           // 全量数据（内存）
+        let filteredProducts = [];   // 搜索过滤后的数据
+        let currentPage = 1;
+        let pageSize = 100;
+        let searchTimer = null;      // 防抖 timer
+
+        // ── IndexedDB ─────────────────────────────────────────
+        const DB_NAME = 'ProductDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'products';
+        let db = null;
+
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => { db = request.result; resolve(db); };
+                request.onupgradeneeded = (event) => {
+                    const database = event.target.result;
+                    if (!database.objectStoreNames.contains(STORE_NAME)) {
+                        const store = database.createObjectStore(STORE_NAME, { keyPath: '条码' });
+                        store.createIndex('名称', '名称', { unique: false });
+                        store.createIndex('货号', '货号', { unique: false });
+                        store.createIndex('类别', '类别', { unique: false });
+                    }
+                };
+            });
+        }
+
+        async function loadData() {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction([STORE_NAME], 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.getAll();
+                req.onsuccess = () => {
+                    products = req.result;
+                    filteredProducts = products;
+                    currentPage = 1;
+                    renderPage();
+                    updateStats();
+                    resolve(products);
+                };
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function saveData() {
+            if (!db) await initDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction([STORE_NAME], 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const clearReq = store.clear();
+                clearReq.onsuccess = () => {
+                    if (products.length === 0) { resolve(); return; }
+                    let done = 0;
+                    products.forEach(p => {
+                        const r = store.put(p);
+                        r.onsuccess = () => { if (++done === products.length) resolve(); };
+                        r.onerror = () => reject(r.error);
+                    });
+                };
+                clearReq.onerror = () => reject(clearReq.error);
+            });
+        }
+
+        // ── 统计 ──────────────────────────────────────────────
+        function updateStats() {
+            document.getElementById('totalCount').textContent = products.length;
+            const totalStock = products.reduce((s, p) => s + (parseFloat(p['库存']) || 0), 0);
+            const totalSold  = products.reduce((s, p) => s + (parseFloat(p['售出']) || 0), 0);
+            document.getElementById('totalStock').textContent = totalStock;
+            document.getElementById('totalSold').textContent  = totalSold;
+        }
+
+        // ── 渲染（只渲染当前页，用 DocumentFragment 减少重绘）──
+        const COLUMNS = ['条码','货号','名称','规格','类别','库存','售出','单位','会员价','零售价','进价','打折','积分','更新','过期日期','备注'];
+
+        function renderPage() {
+            const tbody = document.getElementById('productTableBody');
+            const total = filteredProducts.length;
+            const term  = document.getElementById('searchInput').value.trim();
+
+            if (total === 0) {
+                tbody.innerHTML = `
+                    <tr><td colspan="16" class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        <p>${term ? '未找到匹配的商品' : '暂无数据，请导入Excel文件或下载模板'}</p>
+                    </td></tr>`;
+                updatePagination(0);
+                return;
+            }
+
+            const totalPages = Math.ceil(total / pageSize);
+            if (currentPage > totalPages) currentPage = totalPages;
+
+            const start    = (currentPage - 1) * pageSize;
+            const pageData = filteredProducts.slice(start, start + pageSize);
+            const termLow  = term.toLowerCase();
+
+            // DocumentFragment 批量操作，避免多次触发重排
+            const frag = document.createDocumentFragment();
+            pageData.forEach(product => {
+                const tr = document.createElement('tr');
+                COLUMNS.forEach(col => {
+                    const td  = document.createElement('td');
+                    const raw = product[col] !== undefined ? String(product[col]) : '';
+                    if (term && raw.toLowerCase().includes(termLow)) {
+                        td.innerHTML = safeHighlight(raw, term);
+                    } else {
+                        td.textContent = raw;
+                    }
+                    tr.appendChild(td);
+                });
+                frag.appendChild(tr);
+            });
+
+            tbody.innerHTML = '';
+            tbody.appendChild(frag);
+            updatePagination(total);
+        }
+
+        // 安全高亮：先 escape 再高亮，防 XSS
+        function safeHighlight(text, term) {
+            const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            const escapedText = esc(text);
+            const escapedTerm = esc(term).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return escapedText.replace(new RegExp('(' + escapedTerm + ')', 'gi'),
+                '<span class="highlight">$1</span>');
+        }
+
+        // ── 分页控件 ──────────────────────────────────────────
+        function updatePagination(total) {
+            const bar        = document.getElementById('paginationBar');
+            const totalPages = Math.ceil(total / pageSize);
+
+            if (total === 0) { bar.style.display = 'none'; return; }
+            bar.style.display = 'flex';
+
+            const start = (currentPage - 1) * pageSize + 1;
+            const end   = Math.min(currentPage * pageSize, total);
+            document.getElementById('pageInfo').textContent =
+                `共 ${total} 条，显示 ${start}-${end} 条`;
+
+            const btns = document.getElementById('pageBtns');
+            btns.innerHTML = '';
+            if (totalPages <= 1) return;
+
+            // 上一页
+            const prev = makePageBtn('‹ 上一页', currentPage === 1, () => goToPage(currentPage - 1));
+            btns.appendChild(prev);
+
+            // 页码省略逻辑
+            let pages = [];
+            if (totalPages <= 7) {
+                pages = Array.from({length: totalPages}, (_, i) => i + 1);
+            } else {
+                pages = [1];
+                if (currentPage > 3) pages.push('…');
+                for (let i = Math.max(2, currentPage-1); i <= Math.min(totalPages-1, currentPage+1); i++) pages.push(i);
+                if (currentPage < totalPages - 2) pages.push('…');
+                pages.push(totalPages);
+            }
+            pages.forEach(p => {
+                if (p === '…') {
+                    const sp = document.createElement('span');
+                    sp.textContent = '···'; sp.style.padding = '0 4px'; sp.style.color = '#999';
+                    btns.appendChild(sp);
+                } else {
+                    btns.appendChild(makePageBtn(p, false, () => goToPage(p), p === currentPage));
+                }
+            });
+
+            // 下一页
+            btns.appendChild(makePageBtn('下一页 ›', currentPage === totalPages, () => goToPage(currentPage + 1)));
+        }
+
+        function makePageBtn(text, disabled, onClick, active = false) {
+            const btn = document.createElement('button');
+            btn.className = 'page-btn' + (active ? ' active' : '');
+            btn.textContent = text;
+            btn.disabled = disabled;
+            btn.onclick = onClick;
+            return btn;
+        }
+
+        function goToPage(page) {
+            const totalPages = Math.ceil(filteredProducts.length / pageSize);
+            if (page < 1 || page > totalPages) return;
+            currentPage = page;
+            renderPage();
+            document.querySelector('.table-container').scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+
+        function changePageSize(val) {
+            pageSize = parseInt(val);
+            currentPage = 1;
+            renderPage();
+        }
+
+        // ── 搜索（防抖 300ms）────────────────────────────────
+        function searchProducts() {
+            const box = document.getElementById('searchBox');
+            box.classList.add('loading');
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+                const term     = document.getElementById('searchInput').value.trim();
+                const termLow  = term.toLowerCase();
+                const fields   = ['条码','货号','名称','规格','类别'];
+
+                if (!term) {
+                    filteredProducts = products;
+                } else {
+                    filteredProducts = products.filter(p => {
+                        for (let i = 0; i < fields.length; i++) {
+                            const v = p[fields[i]];
+                            if (v && String(v).toLowerCase().includes(termLow)) return true;
+                        }
+                        return false;
+                    });
+                }
+                currentPage = 1;
+                renderPage();
+                box.classList.remove('loading');
+            }, 300); // 300ms 防抖：停止输入后才开始搜索
+        }
+
+        // ── 导入 Excel ────────────────────────────────────────
+        async function importExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const wb   = XLSX.read(data, { type: 'array' });
+                    const ws   = wb.Sheets[wb.SheetNames[0]];
+                    const json = XLSX.utils.sheet_to_json(ws);
+                    if (json.length === 0) { showMessage('Excel文件为空', 'error'); return; }
+                    showMessage(`正在处理 ${json.length} 条数据...`, 'info');
+
+                    const processed = json.map(row => {
+                        const p = {};
+                        COLUMNS.forEach(col => {
+                            let v = row[col];
+                            if (col === '条码' && v !== undefined) {
+                                v = String(v);
+                                if (v.includes('e') || v.includes('E')) v = Number(v).toFixed(0);
+                            }
+                            p[col] = v !== undefined ? v : '';
+                        });
+                        return p;
+                    });
+
+                    const map = new Map(products.map(p => [p['条码'], p]));
+                    processed.forEach(p => { if (p['条码']) map.set(p['条码'], p); });
+                    products = Array.from(map.values());
+
+                    await saveData();
+                    filteredProducts = products;
+                    currentPage = 1;
+                    renderPage();
+                    updateStats();
+                    showMessage(`成功导入 ${processed.length} 条商品数据`, 'success');
+                } catch (err) {
+                    showMessage('导入失败: ' + err.message, 'error');
+                    console.error(err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            event.target.value = '';
+        }
+
+        // ── 导出 Excel ────────────────────────────────────────
+        function exportExcel() {
+            if (products.length === 0) { showMessage('没有数据可导出', 'error'); return; }
+            const exportData = products.map(p => {
+                const row = {}; COLUMNS.forEach(col => { row[col] = p[col] || ''; }); return row;
+            });
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '商品数据');
+            ws['!cols'] = [
+                {wch:18},{wch:12},{wch:25},{wch:15},{wch:12},
+                {wch:8},{wch:8},{wch:8},{wch:10},{wch:10},
+                {wch:10},{wch:8},{wch:8},{wch:12},{wch:12},{wch:20}
+            ];
+            XLSX.writeFile(wb, `商品数据_${new Date().toISOString().slice(0,10)}.xlsx`);
+            showMessage('导出成功', 'success');
+        }
+
+        // ── 下载模板 ──────────────────────────────────────────
+        function downloadTemplate() {
+            const sample = [
+                {'条码':'6901234567890','货号':'SP001','名称':'可口可乐 500ml','规格':'500ml/瓶','类别':'食品饮料',
+                 '库存':100,'售出':50,'单位':'瓶','会员价':3.00,'零售价':3.50,'进价':2.00,
+                 '打折':'是','积分':1,'更新':'2024-01-15','过期日期':'2025-01-15','备注':'畅销商品'},
+                {'条码':'6901234567891','货号':'SP002','名称':'雪碧 500ml','规格':'500ml/瓶','类别':'食品饮料',
+                 '库存':80,'售出':30,'单位':'瓶','会员价':3.00,'零售价':3.50,'进价':2.00,
+                 '打折':'否','积分':1,'更新':'2024-01-15','过期日期':'2025-01-15','备注':''}
+            ];
+            const ws = XLSX.utils.json_to_sheet(sample);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '导入模板');
+            ws['!cols'] = [
+                {wch:18},{wch:12},{wch:25},{wch:15},{wch:12},
+                {wch:8},{wch:8},{wch:8},{wch:10},{wch:10},
+                {wch:10},{wch:8},{wch:8},{wch:12},{wch:12},{wch:20}
+            ];
+            XLSX.writeFile(wb, '导入模板.xlsx');
+            showMessage('模板下载成功', 'success');
+        }
+
+        // ── 清空数据 ──────────────────────────────────────────
+        async function clearAllData() {
+            if (products.length === 0) { showMessage('当前没有数据', 'info'); return; }
+            if (confirm(`确定要清空所有 ${products.length} 条商品数据吗？此操作不可恢复！`)) {
+                products = []; filteredProducts = [];
+                await saveData();
+                renderPage();
+                updateStats();
+                showMessage('数据已清空', 'success');
+            }
+        }
+
+        // ── 消息提示 ──────────────────────────────────────────
+        function showMessage(text, type = 'info') {
+            const msg = document.createElement('div');
+            msg.className = `message ${type}`;
+            msg.textContent = text;
+            document.body.appendChild(msg);
+            setTimeout(() => msg.remove(), 3000);
+        }
+
+        // ── 初始化 ────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', async () => {
+            document.getElementById('searchInput').addEventListener('input', searchProducts);
+            await initDB();
+            await loadData();
+        });
+    </script>
+<!-- 更新时间: 2026-04-10 02:07:00 (性能优化版：防抖搜索+分页渲染) -->
+</body>
+</html>

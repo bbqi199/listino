@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECO-POS 收银系统</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- 侧边导航 -->
+        <nav class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🛒</span>
+                <span class="logo-text">ECO-POS</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-page="cashier">
+                    <span class="nav-icon">💰</span>
+                    <span>收银台</span>
+                </li>
+                <li class="nav-item" data-page="products">
+                    <span class="nav-icon">📦</span>
+                    <span>商品管理</span>
+                </li>
+                <li class="nav-item" data-page="orders">
+                    <span class="nav-icon">📋</span>
+                    <span>订单记录</span>
+                </li>
+                <li class="nav-item" data-page="reports">
+                    <span class="nav-icon">📊</span>
+                    <span>销售报表</span>
+                </li>
+                <li class="nav-item" data-page="settings">
+                    <span class="nav-icon">⚙️</span>
+                    <span>系统设置</span>
+                </li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <span class="user-avatar">👤</span>
+                    <span class="user-name">管理员</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 收银台页面 -->
+            <div id="cashier-page" class="page active">
+                <div class="cashier-container">
+                    <!-- 左侧：购物车 -->
+                    <div class="cart-section">
+                        <div class="cart-header">
+                            <h2>购物车</h2>
+                            <button class="btn-clear" onclick="clearCart()">清空</button>
+                        </div>
+                        <div class="cart-items" id="cart-items">
+                            <!-- 购物车商品列表 -->
+                        </div>
+                        <div class="cart-summary">
+                            <div class="summary-row">
+                                <span>商品数量:</span>
+                                <span id="total-items">0</span>
+                            </div>
+                            <div class="summary-row">
+                                <span>小计:</span>
+                                <span id="subtotal">¥0.00</span>
+                            </div>
+                            <div class="summary-row discount">
+                                <span>折扣:</span>
+                                <span id="discount">-¥0.00</span>
+                            </div>
+                            <div class="summary-row total">
+                                <span>合计:</span>
+                                <span id="total-amount">¥0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右侧：操作区 -->
+                    <div class="action-section">
+                        <div class="search-box">
+                            <input type="text" id="barcode-input" placeholder="扫描条码或输入商品编码..." autofocus>
+                            <button class="btn-search" onclick="searchProduct()">🔍</button>
+                        </div>
+                        
+                        <div class="quick-products" id="quick-products">
+                            <!-- 快捷商品 -->
+                        </div>
+
+                        <div class="payment-section">
+                            <h3>支付方式</h3>
+                            <div class="payment-methods">
+                                <button class="payment-btn active" data-method="cash">
+                                    <span class="payment-icon">💵</span>
+                                    <span>现金</span>
+                                </button>
+                                <button class="payment-btn" data-method="wechat">
+                                    <span class="payment-icon">💚</span>
+                                    <span>微信</span>
+                                </button>
+                                <button class="payment-btn" data-method="alipay">
+                                    <span class="payment-icon">💙</span>
+                                    <span>支付宝</span>
+                                </button>
+                                <button class="payment-btn" data-method="card">
+                                    <span class="payment-icon">💳</span>
+                                    <span>银行卡</span>
+                                </button>
+                            </div>
+                            <button class="btn-checkout" onclick="checkout()">
+                                <span>结算</span>
+                                <span class="checkout-amount" id="checkout-amount">¥0.00</span>
+                            </button>
+                        </div>
+
+                        <div class="shortcuts">
+                            <h4>快捷键</h4>
+                            <div class="shortcut-list">
+                                <span><kbd>F1</kbd> 帮助</span>
+                                <span><kbd>F2</kbd> 查找商品</span>
+                                <span><kbd>F3</kbd> 数量</span>
+                                <span><kbd>F4</kbd> 折扣</span>
+                                <span><kbd>F5</kbd> 删除</span>
+                                <span><kbd>F9</kbd> 结算</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 商品管理页面 -->
+            <div id="products-page" class="page">
+                <div class="page-header">
+                    <h2>商品管理</h2>
+                    <button class="btn-primary" onclick="showAddProductModal()">+ 添加商品</button>
+                </div>
+                <div class="products-toolbar">
+                    <input type="text" id="product-search" placeholder="搜索商品名称或条码...">
+                    <select id="category-filter">
+                        <option value="">全部分类</option>
+                        <option value="food">食品饮料</option>
+                        <option value="daily">日用百货</option>
+                        <option value="digital">数码电器</option>
+                        <option value="clothing">服装鞋帽</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+                <div class="products-table-container">
+                    <table class="products-table">
+                        <thead>
+                            <tr>
+                                <th>条码</th>
+                                <th>商品名称</th>
+                                <th>分类</th>
+                                <th>售价</th>
+                                <th>库存</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="products-list">
+                            <!-- 商品列表 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 订单记录页面 -->
+            <div id="orders-page" class="page">
+                <div class="page-header">
+                    <h2>订单记录</h2>
+                    <div class="date-filter">
+                        <input type="date" id="start-date">
+                        <span>至</span>
+                        <input type="date" id="end-date">
+                        <button class="btn-secondary" onclick="filterOrders()">查询</button>
+                    </div>
+                </div>
+                <div class="orders-table-container">
+                    <table class="orders-table">
+                        <thead>
+                            <tr>
+                                <th>订单号</th>
+                                <th>时间</th>
+                                <th>商品数量</th>
+                                <th>金额</th>
+                                <th>支付方式</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orders-list">
+                            <!-- 订单列表 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 销售报表页面 -->
+            <div id="reports-page" class="page">
+                <div class="page-header">
+                    <h2>销售报表</h2>
+                    <div class="report-tabs">
+                        <button class="tab-btn active" data-report="daily">日报</button>
+                        <button class="tab-btn" data-report="monthly">月报</button>
+                        <button class="tab-btn" data-report="yearly">年报</button>
+                    </div>
+                </div>
+                <div class="report-stats">
+                    <div class="stat-card">
+                        <span class="stat-label">销售额</span>
+                        <span class="stat-value" id="report-sales">¥0.00</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">订单数</span>
+                        <span class="stat-value" id="report-orders">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">客单价</span>
+                        <span class="stat-value" id="report-avg">¥0.00</span>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="sales-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- 系统设置页面 -->
+            <div id="settings-page" class="page">
+                <div class="page-header">
+                    <h2>系统设置</h2>
+                </div>
+                <div class="settings-container">
+                    <div class="setting-group">
+                        <h3>店铺信息</h3>
+                        <div class="form-row">
+                            <label>店铺名称</label>
+                            <input type="text" id="shop-name" value="ECO-SHOP">
+                        </div>
+                        <div class="form-row">
+                            <label>联系电话</label>
+                            <input type="text" id="shop-phone" value="">
+                        </div>
+                        <div class="form-row">
+                            <label>店铺地址</label>
+                            <input type="text" id="shop-address" value="">
+                        </div>
+                    </div>
+                    <div class="setting-group">
+                        <h3>小票设置</h3>
+                        <div class="form-row">
+                            <label>小票标题</label>
+                            <input type="text" id="receipt-title" value="欢迎光临">
+                        </div>
+                        <div class="form-row">
+                            <label>底部欢迎词</label>
+                            <input type="text" id="receipt-footer" value="谢谢惠顾，欢迎下次光临！">
+                        </div>
+                        <div class="form-row">
+                            <label>打印份数</label>
+                            <input type="number" id="receipt-copies" value="1" min="1" max="3">
+                        </div>
+                    </div>
+                    <div class="setting-group">
+                        <h3>数据管理</h3>
+                        <button class="btn-secondary" onclick="exportData()">导出数据(JSON)</button>
+                        <button class="btn-secondary" onclick="importExcel()">导入商品(Excel)</button>
+                        <button class="btn-secondary" onclick="downloadTemplate()">下载Excel模板</button>
+                        <button class="btn-danger" onclick="clearAllData()">清空所有数据</button>
+                    </div>
+                    <button class="btn-primary" onclick="saveSettings()">保存设置</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 结算弹窗 -->
+    <div id="checkout-modal" class="modal">
+        <div class="modal-content checkout-modal">
+            <div class="modal-header">
+                <h3>订单结算</h3>
+                <button class="btn-close" onclick="closeCheckoutModal()">×</button>
+            </div>
+            <div class="checkout-details">
+                <div class="checkout-row total">
+                    <span>应付金额:</span>
+                    <span id="modal-total">¥0.00</span>
+                </div>
+                <div class="checkout-row">
+                    <label>实收金额:</label>
+                    <input type="number" id="received-amount" step="0.01" oninput="calculateChange()">
+                </div>
+                <div class="checkout-row change">
+                    <span>找零:</span>
+                    <span id="change-amount">¥0.00</span>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeCheckoutModal()">取消</button>
+                <button class="btn-primary" onclick="confirmCheckout()">确认结算</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加商品弹窗 -->
+    <div id="product-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>添加商品</h3>
+                <button class="btn-close" onclick="closeProductModal()">×</button>
+            </div>
+            <div class="form-container">
+                <div class="form-row">
+                    <label>商品条码 *</label>
+                    <input type="text" id="product-barcode" required>
+                </div>
+                <div class="form-row">
+                    <label>商品名称 *</label>
+                    <input type="text" id="product-name" required>
+                </div>
+                <div class="form-row">
+                    <label>分类</label>
+                    <select id="product-category">
+                        <option value="food">食品饮料</option>
+                        <option value="daily">日用百货</option>
+                        <option value="digital">数码电器</option>
+                        <option value="clothing">服装鞋帽</option>
+                        <option value="other">其他</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <label>售价 *</label>
+                    <input type="number" id="product-price" step="0.01" required>
+                </div>
+                <div class="form-row">
+                    <label>库存</label>
+                    <input type="number" id="product-stock" value="0">
+                </div>
+                <div class="form-row">
+                    <label>成本价</label>
+                    <input type="number" id="product-cost" step="0.01" value="0">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeProductModal()">取消</button>
+                <button class="btn-primary" onclick="saveProduct()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 小票预览 -->
+    <div id="receipt-modal" class="modal">
+        <div class="modal-content receipt-modal">
+            <div class="receipt" id="receipt-content">
+                <!-- 小票内容 -->
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeReceiptModal()">关闭</button>
+                <button class="btn-primary" onclick="printReceipt()">打印小票</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
