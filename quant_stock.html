@@ -670,6 +670,14 @@
                     const start = b * batchSize;
                     const end = Math.min(start + batchSize, stockCount);
                     const batch = allData.slice(start, end);
+                    
+                    // 调试：检查600519和601668是否在这个批次中
+                    const has600519 = batch.find(s => s.f12 === '600519');
+                    const has601668 = batch.find(s => s.f12 === '601668');
+                    if (has600519 || has601668) {
+                        console.log(`批次${b}包含: 600519=${!!has600519}, 601668=${!!has601668}`);
+                    }
+                    
                     const prefixes = batch.map(s => s.f12.startsWith('6') ? 'sh' + s.f12 : 'sz' + s.f12).join(',');
                     
                     try {
