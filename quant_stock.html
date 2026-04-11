@@ -635,67 +635,51 @@
                 
                 console.log('获取到数据量:', allData.length);
                 
-                // 先打印腾讯API完整字段给用户看
-                console.log('\n========== 腾讯API字段调试 ==========');
-                try {
-                    const testResp = await fetch(`https://qt.gtimg.cn/q=sz000997,sh600519`);
-                    const testText = await testResp.text();
-                    
-                    const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                    let match;
-                    while ((match = regex.exec(testText)) !== null) {
-                        const code = match[2];
-                        const fields = match[3].split('~');
-                        console.log(`\n股票 ${code} (共${fields.length}个字段):`);
-                        for (let i = 0; i < fields.length; i++) {
-                            if (fields[i] && fields[i] !== '-') {
-                                console.log(`  [${i}] = "${fields[i]}"`);
-                            }
-                        }
+                const allData = [];
+                const pageSize = 100;
+                // f173=股息率, f162=PE, f167=PB, f116=ROE
+                const fields = 'f12,f14,f3,f2,f4,f5,f6,f8,f10,f15,f16,f17,f18,f62,f116,f162,f167,f173';
+                const totalResp = await fetch(`${API.EASTMONEY_LIST}?pn=1&pz=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12`);
+                const totalJson = await totalResp.json();
+                const total = totalJson.data?.total || 100;
+                const totalPages = Math.ceil(total / pageSize);
+                
+                console.log('总记录:', total, '总页数:', totalPages);
+                
+                // 优化：并行获取（每次5页并行）
+                const batchPages = 5;
+                for (let batch = 0; batch < totalPages; batch += batchPages) {
+                    const promises = [];
+                    for (let i = 0; i < batchPages && (batch + i) < totalPages; i++) {
+                        const page = batch + i + 1;
+                        promises.push(fetch(`${API.EASTMONEY_LIST}?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=${fields}`)
+                            .then(r => r.json()));
                     }
-                } catch(e) {
-                    console.log('调试请求失败:', e.message);
-                }
-                console.log('\n=====================================\n');
-                
-                // 获取股息率
-                const dividendMap = {};
-                console.log('正在获取股息率...');
-                
-                const batchSize = 100;
-                const stockCount = Math.min(allData.length, 500);
-                const batches = Math.ceil(stockCount / batchSize);
-                
-                for (let b = 0; b < batches; b++) {
-                    const start = b * batchSize;
-                    const end = Math.min(start + batchSize, stockCount);
-                    const batch = allData.slice(start, end);
-                    const prefixes = batch.map(s => s.f12.startsWith('6') ? 'sh' + s.f12 : 'sz' + s.f12).join(',');
-                    
-                    try {
-                        const resp = await fetch(`https://qt.gtimg.cn/q=${prefixes}`);
-                        const text = await resp.text();
-                        
-                        const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                        let match;
-                        while ((match = regex.exec(text)) !== null) {
-                            const code = match[2];
-                            const fields = match[3].split('~');
-                            if (fields[64] && !isNaN(fields[64]) && parseFloat(fields[64]) > 0) {
-                                dividendMap[code] = parseFloat(fields[64]);
-                            }
+                    const results = await Promise.all(promises);
+                    results.forEach(json => {
+                        if (json.data && json.data.diff) {
+                            allData.push(...json.data.diff);
                         }
-                    } catch(e) {}
+                    });
                 }
                 
-                console.log('股息率获取成功:', Object.keys(dividendMap).length);
+                console.log('获取到数据量:', allData.length);
+                
+                // 打印股息率样本给用户确认
+                console.log('\n========== 股息率字段调试 ==========');
+                const sample = allData.slice(0, 5);
+                sample.forEach(s => {
+                    console.log(`${s.f14}(${s.f12}): 股息率f173=${s.f173}, ROE=f116=${s.f116}, PE=f162=${s.f162}, PB=f167=${s.f167}`);
+                });
+                console.log('===================================\n');
                 
                 screenData = allData.map(i => {
                     return {
                         code: i.f12, name: i.f14, price: i.f2, changePct: i.f3,
                         change: i.f4, turnover: i.f8, vol: i.f5, amount: i.f6,
-                        high: i.f15, low: i.f16, open: i.f17, pe: i.f162 || 0, pb: 0,
-                        roe: parseFloat(i.f116) || 0, dividend: dividendMap[i.f12] || 0
+                        high: i.f15, low: i.f16, open: i.f17, close: i.f18,
+                        pe: i.f162 || 0, pb: i.f167 || 0,
+                        roe: parseFloat(i.f116) || 0, dividend: parseFloat(i.f173) || 0
                     };
                 });
                 
