@@ -681,8 +681,9 @@
                         while ((match = regex.exec(text)) !== null) {
                             const code = match[2];
                             const fields = match[3].split('~');
-                            if (fields[64] && !isNaN(fields[64]) && parseFloat(fields[64]) > 0) {
-                                dividendMap[code] = parseFloat(fields[64]);
+                            // 字段44 = 股息率(%)
+                            if (fields[44] && !isNaN(fields[44]) && parseFloat(fields[44]) > 0) {
+                                dividendMap[code] = parseFloat(fields[44]);
                             }
                         }
                     } catch(e) {}
