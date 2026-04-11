@@ -658,6 +658,16 @@
                 
                 // 方法2: 东方财富API的f173 - 获取更多页
                 console.log('\n=== 东方财富API f173 ===');
+                
+                // 先打印第一条数据看看结构
+                try {
+                    const resp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f173`);
+                    const json = await resp.json();
+                    console.log('东方财富原始数据示例:', JSON.stringify(json.data?.diff?.[0], null, 2));
+                } catch(e) {
+                    console.log('获取示例失败:', e.message);
+                }
+                
                 for (let page = 1; page <= 56; page++) {
                     try {
                         const resp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f173`);
