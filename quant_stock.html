@@ -648,15 +648,19 @@
                         }
                     } catch(e) {}
                 }
-                console.log('腾讯API - 新大陆(000997):', dividendMapTencent['000997']);
-                console.log('腾讯API - 茅台(600519):', dividendMapTencent['600519']);
-                console.log('腾讯API获取成功:', Object.keys(dividendMapTencent).length);
                 
-                // 方法2: 东方财富API的f173
+                // 直接查特定股票
+                const testCodes = ['000997', '600519', '000001', '000002', '600000'];
+                testCodes.forEach(code => {
+                    const prefix = code.startsWith('6') ? 'sh' + code : 'sz' + code;
+                    console.log(`腾讯 ${code}: 字段64=${dividendMapTencent[code] || '无'}`);
+                });
+                
+                // 方法2: 东方财富API的f173 - 获取更多页
                 console.log('\n=== 东方财富API f173 ===');
-                for (let page = 1; page <= 10; page++) {
+                for (let page = 1; page <= 56; page++) {
                     try {
-                        const resp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f173`);
+                        const resp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f173`);
                         const json = await resp.json();
                         if (json.data?.diff) {
                             json.data.diff.forEach(d => {
@@ -667,9 +671,9 @@
                         }
                     } catch(e) {}
                 }
-                console.log('东方财富 - 新大陆(000997):', dividendMapEM['000997']);
-                console.log('东方财富 - 茅台(600519):', dividendMapEM['600519']);
-                console.log('东方财富获取成功:', Object.keys(dividendMapEM).length);
+                testCodes.forEach(code => {
+                    console.log(`东方财富 ${code}: f173=${dividendMapEM[code] || '无'}`);
+                });
                 
                 // 使用腾讯API作为默认（数据更全）
                 const dividendMap = dividendMapTencent;
