@@ -663,7 +663,7 @@
                 console.log('正在获取股息率...');
                 
                 const batchSize = 100;
-                const stockCount = Math.min(allData.length, 500);
+                const stockCount = Math.min(allData.length, 3000);  // 增大范围覆盖更多股票
                 const batches = Math.ceil(stockCount / batchSize);
                 
                 for (let b = 0; b < batches; b++) {
