@@ -57,6 +57,10 @@
         .data-table th { background: #0d1117; font-weight: 600; color: #8b949e; position: sticky; top: 0; }
         .data-table tr:hover { background: #1c2128; }
         .data-table tr { cursor: pointer; }
+        .data-table th.sortable { cursor: pointer; user-select: none; }
+        .data-table th.sortable:hover { color: #58a6ff; }
+        .data-table th.sort-asc::after { content: ' ▲'; color: #58a6ff; }
+        .data-table th.sort-desc::after { content: ' ▼'; color: #58a6ff; }
         
         /* 颜色 */
         .up { color: #f85149; } /* 红涨 */
@@ -324,17 +328,17 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>代码</th>
-                                    <th>名称</th>
-                                    <th>现价</th>
-                                    <th>涨跌幅</th>
-                                    <th>换手率</th>
-                                    <th>量比</th>
-                                    <th>成交额(万)</th>
-                                    <th>PE</th>
-                                    <th>PB</th>
-                                    <th>ROE</th>
-                                    <th>股息率</th>
+                                    <th class="sortable" onclick="toggleScreenSort('code')">代码</th>
+                                    <th class="sortable" onclick="toggleScreenSort('name')">名称</th>
+                                    <th class="sortable" onclick="toggleScreenSort('price')">现价</th>
+                                    <th class="sortable" onclick="toggleScreenSort('changePct')">涨跌幅</th>
+                                    <th class="sortable" onclick="toggleScreenSort('turnover')">换手率</th>
+                                    <th class="sortable" onclick="toggleScreenSort('vol')">量比</th>
+                                    <th class="sortable" onclick="toggleScreenSort('amount')">成交额(万)</th>
+                                    <th class="sortable" onclick="toggleScreenSort('pe')">PE</th>
+                                    <th class="sortable" onclick="toggleScreenSort('pb')">PB</th>
+                                    <th class="sortable" onclick="toggleScreenSort('roe')">ROE</th>
+                                    <th class="sortable" onclick="toggleScreenSort('dividend')">股息率</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -487,6 +491,8 @@
         let marketData = [];
         let screenData = [];
         let filteredData = [];
+        let screenSortField = 'changePct';
+        let screenSortDir = 'desc';
         let currentMarketTab = 'hot';
         let currentPeriod = 'daily';
         let stockKlineData = null;
@@ -764,7 +770,19 @@
                 tbody.innerHTML = '<tr><td colspan="12" class="loading">没有符合条件的数据</td></tr>';
                 return;
             }
-            tbody.innerHTML = data.slice(0, 100).map(s => `
+            
+            // 排序
+            const sorted = [...data].sort((a, b) => {
+                let va = a[screenSortField], vb = b[screenSortField];
+                if (va == null || va === '--') va = screenSortDir === 'asc' ? Infinity : -Infinity;
+                if (vb == null || vb === '--') vb = screenSortDir === 'asc' ? Infinity : -Infinity;
+                if (typeof va === 'string') {
+                    return screenSortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+                }
+                return screenSortDir === 'asc' ? va - vb : vb - va;
+            });
+            
+            tbody.innerHTML = sorted.slice(0, 100).map(s => `
                 <tr onclick="showAnalysis('${s.code}')">
                     <td>${s.code}</td>
                     <td>${s.name}</td>
@@ -780,6 +798,28 @@
                     <td><button class="btn btn-secondary btn-small" onclick="event.stopPropagation();quickAddWatch('${s.code}','${s.name}')">+自选</button></td>
                 </tr>
             `).join('');
+        }
+        
+        function toggleScreenSort(field) {
+            if (screenSortField === field) {
+                screenSortDir = screenSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                screenSortField = field;
+                screenSortDir = 'desc';
+            }
+            // 更新表头样式
+            document.querySelectorAll('.data-table thead th.sortable').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+                if (th.textContent.trim() === getSortLabel(field)) {
+                    th.classList.add(screenSortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+                }
+            });
+            renderScreenResult(filteredData);
+        }
+        
+        function getSortLabel(field) {
+            const map = {code:'代码', name:'名称', price:'现价', changePct:'涨跌幅', turnover:'换手率', vol:'量比', amount:'成交额(万)', pe:'PE', pb:'PB', roe:'ROE', dividend:'股息率'};
+            return map[field] || field;
         }
         
         function exportScreenResult() {
