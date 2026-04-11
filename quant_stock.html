@@ -625,28 +625,36 @@
                 const dividendMap = {};
                 console.log('正在获取TTM股息率...');
                 
-                // 分批获取，每批20个
+                // 先测试一个股票，打印完整返回数据
+                try {
+                    const testResp = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=1.000333&fields=f12,f57,f58,f107,f116,f162,f167,f173,f174,f175,f176,f177`);
+                    const testJson = await testResp.json();
+                    console.log('东方财富详情API返回:', JSON.stringify(testJson.data, null, 2));
+                } catch(e) {
+                    console.log('API调用失败:', e);
+                }
+                
+                // 分批获取
                 const batchSize = 20;
-                for (let i = 0; i < Math.min(allData.length, 300); i += batchSize) {
+                for (let i = 0; i < Math.min(allData.length, 100); i += batchSize) {
                     const batch = allData.slice(i, i + batchSize);
                     const secids = batch.map(s => s.f12.startsWith('6') ? '1.' + s.f12 : '0.' + s.f12).join(',');
                     
                     try {
-                        const resp = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secids}&fields=f12,f173`);
+                        const resp = await fetch(`https://push2.eastmoney.com/api/qt/stock/get?secid=${secids}&fields=f12,f57,f58,f107,f116,f162,f167,f173,f174,f175`);
                         const json = await resp.json();
-                        
-                        // f173 在这里才是 TTM 股息率（需要除以100）
                         const data = json.data;
                         if (data) {
-                            if (Array.isArray(data)) {
-                                data.forEach(item => {
-                                    if (item.f12 && item.f173) {
-                                        dividendMap[item.f12] = parseFloat(item.f173) / 100;
+                            const arr = Array.isArray(data) ? data : [data];
+                            arr.forEach(item => {
+                                if (item && item.f12) {
+                                    // 尝试不同的字段
+                                    const val = item.f174 || item.f175 || item.f176 || item.f173;
+                                    if (val && parseFloat(val) > 0 && parseFloat(val) < 20) {
+                                        dividendMap[item.f12] = parseFloat(val);
                                     }
-                                });
-                            } else if (data.f12 && data.f173) {
-                                dividendMap[data.f12] = parseFloat(data.f173) / 100;
-                            }
+                                }
+                            });
                         }
                     } catch(e) {
                         // 忽略
