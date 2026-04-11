@@ -691,6 +691,18 @@
                 
                 console.log('股息率获取成功:', Object.keys(dividendMap).length);
                 
+                // 检查关键股票是否获取到股息率
+                console.log('贵州茅台600519股息率:', dividendMap['600519']);
+                console.log('中国建筑601668股息率:', dividendMap['601668']);
+                
+                // 列出没有股息率的知名股票
+                const knownStocks = ['600519', '601668', '000858', '601318', '600036'];
+                knownStocks.forEach(code => {
+                    if (!dividendMap[code]) {
+                        console.log('缺少股息率:', code);
+                    }
+                });
+                
                 screenData = allData.map(i => {
                     return {
                         code: i.f12, name: i.f14, price: i.f2, changePct: i.f3,
