@@ -699,17 +699,33 @@
                 
                 console.log('股息率获取成功:', Object.keys(dividendMap).length);
                 
-                // 检查关键股票是否获取到股息率
+                // 检查关键股票是否获取到股息率，如果没有则单独获取
+                const keyStocks = ['600519', '601668', '000858', '601318', '600036'];
+                const missingStocks = keyStocks.filter(code => !dividendMap[code]);
+                
+                if (missingStocks.length > 0) {
+                    console.log('缺少股息率的股票，单独获取:', missingStocks);
+                    try {
+                        const prefixes = missingStocks.map(code => code.startsWith('6') ? 'sh' + code : 'sz' + code).join(',');
+                        const resp = await fetch(`https://qt.gtimg.cn/q=${prefixes}`);
+                        const text = await resp.text();
+                        const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
+                        let match;
+                        while ((match = regex.exec(text)) !== null) {
+                            const code = match[2];
+                            const fields = match[3].split('~');
+                            if (fields[64] && !isNaN(fields[64]) && parseFloat(fields[64]) > 0) {
+                                dividendMap[code] = parseFloat(fields[64]);
+                                console.log('单独获取成功:', code, '股息率:', fields[64]);
+                            }
+                        }
+                    } catch(e) {
+                        console.log('单独获取失败:', e.message);
+                    }
+                }
+                
                 console.log('贵州茅台600519股息率:', dividendMap['600519']);
                 console.log('中国建筑601668股息率:', dividendMap['601668']);
-                
-                // 列出没有股息率的知名股票
-                const knownStocks = ['600519', '601668', '000858', '601318', '600036'];
-                knownStocks.forEach(code => {
-                    if (!dividendMap[code]) {
-                        console.log('缺少股息率:', code);
-                    }
-                });
                 
                 screenData = allData.map(i => {
                     return {
