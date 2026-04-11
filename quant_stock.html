@@ -621,56 +621,30 @@
                 
                 console.log('获取到数据量:', allData.length);
                 
-                // 获取股息率 - 调试版本
+                // 获取股息率 - 使用东方财富API的f173字段
                 const dividendMap = {};
-                console.log('正在获取股息率...');
+                console.log('正在获取股息率(东方财富f173)...');
                 
-                // 调试：用新大陆(sz000997)和贵州茅台(sh600519)测试腾讯API
-                try {
-                    const testResp = await fetch(`https://qt.gtimg.cn/q=sz000997,sh600519`);
-                    const testText = await testResp.text();
-                    console.log('=== 腾讯API调试 ===');
-                    
-                    const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                    let match;
-                    while ((match = regex.exec(testText)) !== null) {
-                        const code = match[2];
-                        const fields = match[3].split('~');
-                        console.log('\n股票:', code, '字段数:', fields.length);
-                        for (let idx = 30; idx < Math.min(fields.length, 70); idx++) {
-                            if (fields[idx] && fields[idx] !== '-') {
-                                console.log(`  [${idx}]: "${fields[idx]}"`);
-                            }
+                // 从东方财富获取所有股票的股息率
+                for (let page = 1; page <= 56; page++) {
+                    try {
+                        const resp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=${page}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f173`);
+                        const json = await resp.json();
+                        if (json.data?.diff) {
+                            json.data.diff.forEach(d => {
+                                if (d.f173 && parseFloat(d.f173) > 0) {
+                                    dividendMap[d.f12] = parseFloat(d.f173);
+                                }
+                            });
                         }
+                    } catch(e) {
+                        console.warn('获取股息率失败:', page, e.message);
                     }
-                    console.log('=== 腾讯API调试结束 ===\n');
-                } catch(e) {
-                    console.log('腾讯API请求失败:', e.message);
                 }
                 
-                // 同时测试东方财富f173
-                try {
-                    const emResp = await fetch(`https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f173`);
-                    const emJson = await emResp.json();
-                    const xdl = emJson.data?.diff?.find(d => d.f12 === '000997');
-                    const mt = emJson.data?.diff?.find(d => d.f12 === '600519');
-                    console.log('=== 东方财富f173 ===');
-                    console.log('新大陆(000997) f173:', xdl?.f173, '| 名称:', xdl?.f14);
-                    console.log('茅台(600519) f173:', mt?.f173, '| 名称:', mt?.f14);
-                    console.log('===================');
-                    
-                    // 构建股息率映射
-                    if (emJson.data?.diff) {
-                        emJson.data.diff.forEach(d => {
-                            if (d.f173 && parseFloat(d.f173) > 0) {
-                                dividendMap[d.f12] = parseFloat(d.f173);
-                            }
-                        });
-                    }
-                } catch(e) {
-                    console.log('东方财富API失败:', e.message);
-                }
-                
+                // 打印新大陆和茅台的股息率用于验证
+                console.log('新大陆(000997)股息率:', dividendMap['000997']);
+                console.log('茅台(600519)股息率:', dividendMap['600519']);
                 console.log('股息率获取成功:', Object.keys(dividendMap).length);
                 
                 screenData = allData.map(i => {
