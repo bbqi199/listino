@@ -635,48 +635,19 @@
                 
                 console.log('获取到数据量:', allData.length);
                 
-                // 先打印腾讯API完整字段给用户看
-                console.log('\n========== 腾讯API字段调试 ==========');
-                try {
-                    const testResp = await fetch(`https://qt.gtimg.cn/q=sz000997,sh600519`);
-                    const testText = await testResp.text();
-                    
-                    const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                    let match;
-                    while ((match = regex.exec(testText)) !== null) {
-                        const code = match[2];
-                        const fields = match[3].split('~');
-                        console.log(`\n股票 ${code} (共${fields.length}个字段):`);
-                        for (let i = 0; i < fields.length; i++) {
-                            if (fields[i] && fields[i] !== '-') {
-                                console.log(`  [${i}] = "${fields[i]}"`);
-                            }
-                        }
-                    }
-                } catch(e) {
-                    console.log('调试请求失败:', e.message);
-                }
-                console.log('\n=====================================\n');
-                
-                // 获取股息率
-                const dividendMap = {};
-                console.log('正在获取股息率...');
+                // 获取PE/PB/ROE/股息率
+                // 腾讯API字段: 39=PE, 46=PB, 64=股息率(%), 66=ROE(%)
+                const qtDataMap = {};
+                console.log('正在获取腾讯API数据(PE/PB/ROE/股息率)...');
                 
                 const batchSize = 100;
-                const stockCount = Math.min(allData.length, 3000);  // 增大范围覆盖更多股票
+                const stockCount = Math.min(allData.length, 3000);
                 const batches = Math.ceil(stockCount / batchSize);
                 
                 for (let b = 0; b < batches; b++) {
                     const start = b * batchSize;
                     const end = Math.min(start + batchSize, stockCount);
                     const batch = allData.slice(start, end);
-                    
-                    // 调试：检查600519和601668是否在这个批次中
-                    const has600519 = batch.find(s => s.f12 === '600519');
-                    const has601668 = batch.find(s => s.f12 === '601668');
-                    if (has600519 || has601668) {
-                        console.log(`批次${b}包含: 600519=${!!has600519}, 601668=${!!has601668}`);
-                    }
                     
                     const prefixes = batch.map(s => s.f12.startsWith('6') ? 'sh' + s.f12 : 'sz' + s.f12).join(',');
                     
@@ -689,22 +660,24 @@
                         while ((match = regex.exec(text)) !== null) {
                             const code = match[2];
                             const fields = match[3].split('~');
-                            // 字段64 = 股息率(%)
-                            if (fields[64] && !isNaN(fields[64]) && parseFloat(fields[64]) > 0) {
-                                dividendMap[code] = parseFloat(fields[64]);
-                            }
+                            qtDataMap[code] = {
+                                pe: parseFloat(fields[39]) || 0,       // 字段39=PE
+                                pb: parseFloat(fields[46]) || 0,       // 字段46=PB
+                                roe: parseFloat(fields[66]) || 0,      // 字段66=ROE
+                                dividend: parseFloat(fields[64]) || 0   // 字段64=股息率
+                            };
                         }
                     } catch(e) {}
                 }
                 
-                console.log('股息率获取成功:', Object.keys(dividendMap).length);
+                console.log('腾讯API数据获取成功:', Object.keys(qtDataMap).length);
                 
-                // 检查关键股票是否获取到股息率，如果没有则单独获取
+                // 对关键股票单独获取（确保不遗漏）
                 const keyStocks = ['600519', '601668', '000858', '601318', '600036'];
-                const missingStocks = keyStocks.filter(code => !dividendMap[code]);
+                const missingStocks = keyStocks.filter(code => !qtDataMap[code]);
                 
                 if (missingStocks.length > 0) {
-                    console.log('缺少股息率的股票，单独获取:', missingStocks);
+                    console.log('补充获取:', missingStocks);
                     try {
                         const prefixes = missingStocks.map(code => code.startsWith('6') ? 'sh' + code : 'sz' + code).join(',');
                         const resp = await fetch(`https://qt.gtimg.cn/q=${prefixes}`);
@@ -714,25 +687,30 @@
                         while ((match = regex.exec(text)) !== null) {
                             const code = match[2];
                             const fields = match[3].split('~');
-                            if (fields[64] && !isNaN(fields[64]) && parseFloat(fields[64]) > 0) {
-                                dividendMap[code] = parseFloat(fields[64]);
-                                console.log('单独获取成功:', code, '股息率:', fields[64]);
-                            }
+                            qtDataMap[code] = {
+                                pe: parseFloat(fields[39]) || 0,
+                                pb: parseFloat(fields[46]) || 0,
+                                roe: parseFloat(fields[66]) || 0,
+                                dividend: parseFloat(fields[64]) || 0
+                            };
                         }
-                    } catch(e) {
-                        console.log('单独获取失败:', e.message);
-                    }
+                    } catch(e) {}
                 }
                 
-                console.log('贵州茅台600519股息率:', dividendMap['600519']);
-                console.log('中国建筑601668股息率:', dividendMap['601668']);
+                // 验证关键股票数据
+                console.log('贵州茅台600519:', qtDataMap['600519']);
+                console.log('中国建筑601668:', qtDataMap['601668']);
                 
                 screenData = allData.map(i => {
+                    const qt = qtDataMap[i.f12] || {};
                     return {
                         code: i.f12, name: i.f14, price: i.f2, changePct: i.f3,
                         change: i.f4, turnover: i.f8, vol: i.f5, amount: i.f6,
-                        high: i.f15, low: i.f16, open: i.f17, pe: i.f162 || 0, pb: 0,
-                        roe: parseFloat(i.f116) || 0, dividend: dividendMap[i.f12] || 0
+                        high: i.f15, low: i.f16, open: i.f17,
+                        pe: qt.pe || 0,      // 腾讯API字段39
+                        pb: qt.pb || 0,      // 腾讯API字段46
+                        roe: qt.roe || 0,    // 腾讯API字段66
+                        dividend: qt.dividend || 0  // 腾讯API字段64
                     };
                 });
                 
