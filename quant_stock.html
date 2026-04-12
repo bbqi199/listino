@@ -771,11 +771,13 @@
                         dividend: qt.dividend || 0,  // 腾讯API字段64
                         revenueGrowth: parseFloat(i.f184) || 0, // 营收增长率%(列表接口)
                         mainFlowAmt: (parseFloat(i.f62) || 0) / 10000, // 主力净流入(万元)
-                        // 财务详情字段(默认null，通过补充查询填入)
-                        profitGrowth: null,
-                        grossMargin: null,
-                        netMargin: null,
-                        debtRatio: null,
+                        // 财务详情字段(默认null，通过东方财富detail API补充填入)
+                        // ROE: 腾讯API字段66初始 + 东方财富f173修正
+                        // 净利增速:东方财富f185 / 毛利率:f186 / 净利率:f187 / 负债率:f188
+                        profitGrowth: null,  // f185
+                        grossMargin: null,   // f186
+                        netMargin: null,     // f187
+                        debtRatio: null,     // f188
                     };
                 });
                 
@@ -796,7 +798,10 @@
                     const batch = toFetch.slice(fb * finBatch, (fb + 1) * finBatch);
                     const ps = batch.map(s => {
                         const secid = s.code.startsWith('6') ? '1.' + s.code : '0.' + s.code;
-                        return fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f12,f186,f187,f188,f103,f104`)
+                        // 东方财富push2/stock/get字段:
+                        // f173=ROE(加权), f184=营收增速(已在列表获取), f185=净利增速,
+                        // f186=毛利率, f187=净利率, f188=资产负债率(ZCFZL)
+                        return fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f12,f173,f185,f186,f187,f188`)
                             .then(r => r.json()).catch(() => null);
                     });
                     const rs = await Promise.all(ps);
@@ -805,12 +810,11 @@
                         const d = json.data;
                         const found = filteredData.find(x => x.code === d.f12);
                         if (found) {
-                            found.profitGrowth = parseFloat(d.f188) || 0;
-                            found.grossMargin  = parseFloat(d.f186) || 0;
-                            found.netMargin    = parseFloat(d.f187) || 0;
-                            const na = parseFloat(d.f103) || 0;
-                            const ta = parseFloat(d.f104) || 0;
-                            found.debtRatio = ta > 0 ? Math.round((1 - na/ta) * 1000) / 10 : 0;
+                            found.roe = parseFloat(d.f173) || found.roe || 0; // ROE优先东方财富,兜底腾讯API
+                            found.profitGrowth = parseFloat(d.f185) || 0;     // 净利增速=f185
+                            found.grossMargin  = parseFloat(d.f186) || 0;     // 毛利率=f186
+                            found.netMargin    = parseFloat(d.f187) || 0;     // 净利率=f187
+                            found.debtRatio    = parseFloat(d.f188) || 0;     // 负债率=f188
                         }
                     });
                     // 每批完成刷新一次
