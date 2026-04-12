@@ -796,27 +796,23 @@
                 const finBatch = 10;
                 for (let fb = 0; fb < Math.ceil(toFetch.length / finBatch); fb++) {
                     const batch = toFetch.slice(fb * finBatch, (fb + 1) * finBatch);
-                    const ps = batch.map(s => {
+                    // 顺序请求并保持序号对应（避免f12字段在财务API中不存在导致匹配失败）
+                    for (let i = 0; i < batch.length; i++) {
+                        const s = batch[i];
                         const secid = s.code.startsWith('6') ? '1.' + s.code : '0.' + s.code;
-                        // 东方财富push2/stock/get字段:
-                        // f173=ROE(加权), f184=营收增速(已在列表获取), f185=净利增速,
-                        // f186=毛利率, f187=净利率, f188=资产负债率(ZCFZL)
-                        return fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f12,f173,f185,f186,f187,f188`)
-                            .then(r => r.json()).catch(() => null);
-                    });
-                    const rs = await Promise.all(ps);
-                    rs.forEach(json => {
-                        if (!json || !json.data) return;
-                        const d = json.data;
-                        const found = filteredData.find(x => x.code === d.f12);
-                        if (found) {
-                            found.roe = parseFloat(d.f173) || found.roe || 0; // ROE优先东方财富,兜底腾讯API
-                            found.profitGrowth = parseFloat(d.f185) || 0;     // 净利增速=f185
-                            found.grossMargin  = parseFloat(d.f186) || 0;     // 毛利率=f186
-                            found.netMargin    = parseFloat(d.f187) || 0;     // 净利率=f187
-                            found.debtRatio    = parseFloat(d.f188) || 0;     // 负债率=f188
-                        }
-                    });
+                        try {
+                            const resp = await fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f173,f185,f186,f187,f188`);
+                            const json = await resp.json();
+                            if (json && json.data) {
+                                const d = json.data;
+                                s.roe = parseFloat(d.f173) || s.roe || 0;
+                                s.profitGrowth = parseFloat(d.f185) || 0;
+                                s.grossMargin = parseFloat(d.f186) || 0;
+                                s.netMargin = parseFloat(d.f187) || 0;
+                                s.debtRatio = parseFloat(d.f188) || 0;
+                            }
+                        } catch(e) {}
+                    }
                     // 每批完成刷新一次
                     renderScreenResult(filteredData);
                 }
