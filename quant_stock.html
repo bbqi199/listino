@@ -680,7 +680,7 @@
                     const promises = [];
                     for (let i = 0; i < batchPages && (batch + i) < totalPages; i++) {
                         const page = batch + i + 1;
-                        promises.push(fetch(`${API.EASTMONEY_LIST}?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f10,f15,f16,f17,f18,f62,f184`)
+                        promises.push(fetch(`${API.EASTMONEY_LIST}?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f10,f15,f16,f17,f18,f62`)
                             .then(r => r.json()));
                     }
                     const results = await Promise.all(promises);
@@ -769,11 +769,10 @@
                         pb: qt.pb || 0,             // 腾讯API字段46
                         roe: qt.roe || 0,           // 腾讯API字段66
                         dividend: qt.dividend || 0,  // 腾讯API字段64
-                        revenueGrowth: parseFloat(i.f184) || 0, // 营收增长率%(列表接口)
+                        revenueGrowth: null,   // f184 - 营收增速(通过detail API补充)
                         mainFlowAmt: (parseFloat(i.f62) || 0) / 10000, // 主力净流入(万元)
-                        // 财务详情字段(默认null，通过东方财富detail API补充填入)
-                        // ROE: 腾讯API字段66初始 + 东方财富f173修正
-                        // 净利增速:东方财富f185 / 毛利率:f186 / 净利率:f187 / 负债率:f188
+                        // 财务详情字段(通过东方财富detail API补充)
+                        // f173=ROE, f184=营收增速, f185=净利增速, f186=毛利率, f187=净利率, f188=负债率
                         profitGrowth: null,  // f185
                         grossMargin: null,   // f186
                         netMargin: null,     // f187
@@ -801,15 +800,16 @@
                         const s = batch[i];
                         const secid = s.code.startsWith('6') ? '1.' + s.code : '0.' + s.code;
                         try {
-                            const resp = await fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f173,f185,f186,f187,f188`);
+                            const resp = await fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f173,f184,f185,f186,f187,f188`);
                             const json = await resp.json();
                             if (json && json.data) {
                                 const d = json.data;
                                 s.roe = parseFloat(d.f173) || s.roe || 0;
-                                s.profitGrowth = parseFloat(d.f185) || 0;
-                                s.grossMargin = parseFloat(d.f186) || 0;
-                                s.netMargin = parseFloat(d.f187) || 0;
-                                s.debtRatio = parseFloat(d.f188) || 0;
+                                s.revenueGrowth = parseFloat(d.f184) || 0;     // 营收增速=f184
+                                s.profitGrowth = parseFloat(d.f185) || 0;      // 净利增速=f185
+                                s.grossMargin = parseFloat(d.f186) || 0;       // 毛利率=f186
+                                s.netMargin = parseFloat(d.f187) || 0;         // 净利率=f187
+                                s.debtRatio = parseFloat(d.f188) || 0;          // 负债率=f188
                             }
                         } catch(e) {}
                     }
@@ -875,11 +875,11 @@
                 const dividend = parseFloat(s.dividend) || 0;
                 const turnover = parseFloat(s.turnover) || 0;
                 const amount = (parseFloat(s.amount) || 0) / 10000;
-                const profitGrowth = parseFloat(s.profitGrowth) ?? 0;
-                const revenueGrowth = parseFloat(s.revenueGrowth) ?? 0;
-                const grossMargin = parseFloat(s.grossMargin) || 0;
-                const netMargin = parseFloat(s.netMargin) || 0;
-                const debtRatio = parseFloat(s.debtRatio) || 0;
+                const profitGrowth = parseFloat(s.profitGrowth) ?? null;
+                const revenueGrowth = parseFloat(s.revenueGrowth) ?? null;
+                const grossMargin = parseFloat(s.grossMargin) ?? null;
+                const netMargin = parseFloat(s.netMargin) ?? null;
+                const debtRatio = parseFloat(s.debtRatio) ?? null;
                 const mainFlowAmt = parseFloat(s.mainFlowAmt) || 0;
                 
                 // 主力净流入方向(旧逻辑)
