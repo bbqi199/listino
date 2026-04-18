@@ -193,26 +193,15 @@
                 <thead>
                     <tr>
                         <th>条码</th>
-                        <th>货号</th>
                         <th>名称</th>
-                        <th>规格</th>
                         <th>类别</th>
-                        <th>库存</th>
-                        <th>售出</th>
-                        <th>单位</th>
-                        <th>会员价</th>
                         <th>零售价</th>
                         <th>进价</th>
-                        <th>打折</th>
-                        <th>积分</th>
-                        <th>更新</th>
-                        <th>过期日期</th>
-                        <th>备注</th>
                     </tr>
                 </thead>
                 <tbody id="productTableBody">
                     <tr>
-                        <td colspan="16" class="empty-state">
+                        <td colspan="5" class="empty-state">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                                 <polyline points="7 10 12 15 17 10"/>
@@ -250,7 +239,7 @@
         let searchTimer = null;
         let dataUpdateTime = '';
 
-        const COLUMNS = ['条码','货号','名称','规格','类别','库存','售出','单位','会员价','零售价','进价','打折','积分','更新','过期日期','备注'];
+        const COLUMNS = ['条码','名称','类别','零售价','进价'];
 
         // ── 从 goods.json 加载数据 ────────────────────────────
         async function loadDataFromJSON() {
@@ -322,7 +311,7 @@
         function showError(message) {
             const tbody = document.getElementById('productTableBody');
             tbody.innerHTML = `
-                <tr><td colspan="16" class="empty-state">
+                <tr><td colspan="5" class="empty-state">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
                         <line x1="12" y1="8" x2="12" y2="12"/>
@@ -342,7 +331,7 @@
 
             if (total === 0) {
                 tbody.innerHTML = `
-                    <tr><td colspan="16" class="empty-state">
+                    <tr><td colspan="5" class="empty-state">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                             <polyline points="7 10 12 15 17 10"/>
