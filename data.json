@@ -1,15 +1,19 @@
 {
-  "market": {
-    "emotion": "主升",
-    "score": 56
-  },
-  "pick": {
-    "stock": "某某股份",
-    "code": "000001",
-    "sector": "人工智能",
-    "leader_score": 9.2,
-    "buy_type": "突破",
-    "can_buy": true,
-    "risk": "低"
-  }
+  "stocks": [
+    {
+      "name": "某某股份",
+      "code": "000001",
+      "close": 12.3,
+      "ma20": 11.8,
+      "ma20_up": true,
+      "ma5": 12.1,
+      "ma10": 11.9,
+      "roc5": 8.2,
+      "volume": 1200000,
+      "vol_ma5": 1500000,
+      "limit_up": false,
+      "money_flow_3d": 1200000,
+      "big_order_in": 500000
+    }
+  ]
 }
