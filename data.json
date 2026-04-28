@@ -3,20 +3,13 @@
     "emotion": "主升",
     "score": 56
   },
-  "sectors": [
-    {
-      "name": "人工智能",
-      "score": 88
-    }
-  ],
-  "leaders": [
-    {
-      "code": "000001",
-      "name": "某某股份",
-      "sector": "人工智能",
-      "score": 10,
-      "连板": 3,
-      "涨幅": 0.12
-    }
-  ]
+  "pick": {
+    "stock": "某某股份",
+    "code": "000001",
+    "sector": "人工智能",
+    "leader_score": 9.2,
+    "buy_type": "突破",
+    "can_buy": true,
+    "risk": "低"
+  }
 }
