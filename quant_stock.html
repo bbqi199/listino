@@ -900,7 +900,6 @@
                     console.log(`[腾讯] 进度 ${Math.min(i + qtBatch, allData.length)}/${allData.length}, 成功${qtSuccessCount}批/失败${qtFailCount}批`);
                 }
                 console.log('[腾讯] 完成，共获取', Object.keys(qtDataMap).length, '只的PE/PB数据');
-                }
                 console.log('[腾讯] qtDataMap 样本:', qtDataMap['600519'], qtDataMap['000001']);
                 
                 screenData = allData.map(i => {
