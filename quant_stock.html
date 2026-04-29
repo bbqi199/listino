@@ -397,6 +397,8 @@
                                     <th class="sortable" onclick="toggleScreenSort('netMargin')">净利率</th>
                                     <th class="sortable" onclick="toggleScreenSort('debtRatio')">负债率</th>
                                     <th class="sortable" onclick="toggleScreenSort('mainFlowAmt')">主力净流入(万)</th>
+                                    <th>评分</th>
+                                    <th title="加权评分=0.25×趋势+0.25×强度+0.20×回调+0.15×成交量+0.15×资金，⭐=满足7项候选条件">加权分</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -537,6 +539,16 @@
         // ==================== 配置 ====================
         const API = {
             SINA_HQ: 'https://hq.sinajs.cn/list=',
+            // 腾讯K线（支持CORS）
+            TENCENT_KLINE: 'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+            // CORS代理列表（按顺序尝试）
+            PROXY_LIST: [
+                'https://corsproxy.io/?',
+                'https://api.allorigins.win/raw?url=',
+                'https://api.codetabs.com/v1/proxy?quest=',
+                'https://yacdn.org/proxy/'
+            ],
+            // 东方财富全市场列表
             EASTMONEY_LIST: 'https://push2.eastmoney.com/api/qt/clist/get',
             EASTMONEY_KLINE: 'https://push2his.eastmoney.com/api/qt/stock/kline/get',
             EASTMONEY_STOCK: 'https://push2.eastmoney.com/api/qt/stock/get'
@@ -618,6 +630,138 @@
         function formatNum(n, d = 2) {
             return parseFloat(n || 0).toFixed(d);
         }
+
+        // ==================== JSONP 跨域请求（用于拉K线绕过CORS） ====================
+        function jsonp(url, params) {
+            return new Promise((resolve, reject) => {
+                const cbName = '_cb_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+                const script = document.createElement('script');
+                const query = Object.entries({ ...params, _: Date.now() })
+                    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+                    .join('&');
+                script.src = `${url}?${query}&callback=${cbName}`;
+                script.onerror = () => { cleanup(); reject(new Error('JSONP请求失败')); };
+                let timeout = setTimeout(() => { cleanup(); reject(new Error('JSONP超时')); }, 10000);
+                function cleanup() {
+                    clearTimeout(timeout);
+                    delete window[cbName];
+                    script.remove();
+                }
+                window[cbName] = (data) => { cleanup(); resolve(data); };
+                document.head.appendChild(script);
+            });
+        }
+
+        // ── 通用的fetch，自动尝试：直连 → CORS代理 ──────────────────────
+        async function proxyFetch(url, timeoutMs = 15000) {
+            // 方法1：先尝试直连
+            try {
+                const resp = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+                if (resp.ok) return await resp.json();
+            } catch(_) {}
+            
+            // 方法2：降级到CORS代理
+            for (const proxy of API.PROXY_LIST) {
+                try {
+                    const proxyUrl = proxy + encodeURIComponent(url);
+                    const ctrl = new AbortController();
+                    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+                    const resp = await fetch(proxyUrl, { signal: ctrl.signal });
+                    clearTimeout(t);
+                    if (!resp.ok) continue;
+                    return await resp.json();
+                } catch(e) {
+                    console.warn(`[代理] ${proxy} 失败:`, e.message);
+                }
+            }
+            return null;
+        }
+        
+        // ── 新浪全市场列表获取（通过Referer直连） ──────────────────────
+        async function fetchSinaAllStocks() {
+            const stocks = [];
+            // 新浪全市场列表接口
+            const url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeDataSimple?page=1&num=100&sort=symbol&asc=1&node=hs_a';
+            
+            try {
+                // 先尝试直连新浪（带Referer）
+                const resp = await fetch(url, {
+                    headers: { 'Referer': 'https://finance.sina.com.cn/' }
+                });
+                if (resp.ok) {
+                    const text = await resp.text();
+                    // 新浪返回类似: [{symbol:"sh600000",name:"浦发银行",...},...]
+                    const data = JSON.parse(text);
+                    if (Array.isArray(data)) {
+                        console.log('[新浪] 直连成功，获取到', data.length, '只');
+                        return data;
+                    }
+                }
+            } catch(e) {
+                console.warn('[新浪] 直连失败:', e.message);
+            }
+            
+            // 降级到代理
+            console.log('[新浪] 尝试CORS代理...');
+            const json = await proxyFetch(url);
+            if (json && Array.isArray(json)) {
+                console.log('[新浪] 代理成功，获取到', json.length, '只');
+                return json;
+            }
+            
+            return [];
+        }
+
+        // ── 带Referer的fetch封装，自动降级到CORS代理 ──────────────────────
+        async function fetchWithReferer(url) {
+            // 先尝试直接访问（腾讯API支持）
+            try {
+                const resp = await fetch(url, {
+                    headers: { 'Referer': 'https://finance.qq.com/' }
+                });
+                if (resp.ok) return await resp.text();
+            } catch(_) {}
+            // 降级：通过CORS代理访问
+            const json = await proxyFetch(url);
+            if (json && json.data) {
+                // 腾讯API返回格式: v_sh600519="..." 转为纯文本
+                return JSON.stringify(json.data);
+            }
+            return '';
+        }
+
+        // 腾讯财经K线接口（支持CORS，JSON格式）
+        async function fetchTencentKline(code, num = 30) {
+            const symbol = code.startsWith('6') ? 'sh' + code : 'sz' + code;
+            const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,,,,${num},qfq`;
+            
+            // 方法1：直接访问（腾讯API支持Referer）
+            try {
+                const resp = await fetch(url, { headers: { 'Referer': 'https://finance.qq.com/' } });
+                if (resp.ok) {
+                    const json = await resp.json();
+                    const data = json?.data?.[symbol]?.qfqday;
+                    if (data && Array.isArray(data) && data.length > 0) {
+                        return data.map(k => ({
+                            date: k[0], open: parseFloat(k[1]), close: parseFloat(k[2]),
+                            high: parseFloat(k[3]), low: parseFloat(k[4]), vol: parseFloat(k[5])
+                        }));
+                    }
+                }
+            } catch(_) {}
+            
+            // 方法2：降级到CORS代理
+            const json = await proxyFetch(url);
+            if (json?.data?.[symbol]?.qfqday) {
+                const data = json.data[symbol].qfqday;
+                return data.map(k => ({
+                    date: k[0], open: parseFloat(k[1]), close: parseFloat(k[2]),
+                    high: parseFloat(k[3]), low: parseFloat(k[4]), vol: parseFloat(k[5])
+                }));
+            }
+            
+            return null;
+        }
         
         function updateClock() {
             const now = new Date();
@@ -661,103 +805,103 @@
         
         // ==================== 选股功能 ====================
         async function startScreen() {
-            document.getElementById('screenResult').innerHTML = '<tr><td colspan="17" class="loading"><div class="spinner"></div>正在筛选...</td></tr>';
+            document.getElementById('screenResult').innerHTML = '<tr><td colspan="19" class="loading"><div class="spinner"></div>正在筛选...</td></tr>';
             
             try {
-                // 并行获取东方财富数据（优化：分批并行请求）
+                // 获取全市场股票列表（使用新浪API，兼容Referer直连）
+                document.getElementById('screenResult').innerHTML = '<tr><td colspan="19" class="loading"><div class="spinner"></div>正在获取股票列表...</td></tr>';
+                
                 const allData = [];
                 const pageSize = 100;
-                const totalResp = await fetch(`${API.EASTMONEY_LIST}?pn=1&pz=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12`);
-                const totalJson = await totalResp.json();
-                const total = totalJson.data?.total || 100;
-                const totalPages = Math.ceil(total / pageSize);
+                let page = 1;
+                let hasMore = true;
                 
-                console.log('总记录:', total, '总页数:', totalPages);
-                
-                // 优化：并行获取（每次5页并行）
-                const batchPages = 5;
-                for (let batch = 0; batch < totalPages; batch += batchPages) {
-                    const promises = [];
-                    for (let i = 0; i < batchPages && (batch + i) < totalPages; i++) {
-                        const page = batch + i + 1;
-                        promises.push(fetch(`${API.EASTMONEY_LIST}?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f10,f15,f16,f17,f18,f62`)
-                            .then(r => r.json()));
+                while (hasMore) {
+                    const url = `https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeDataSimple?page=${page}&num=${pageSize}&sort=symbol&asc=1&node=hs_a`;
+                    const resp = await fetch(url, { headers: { 'Referer': 'https://finance.sina.com.cn/' } });
+                    
+                    if (!resp.ok) break;
+                    
+                    const text = await resp.text();
+                    let data = [];
+                    try { data = JSON.parse(text); } catch { break; }
+                    
+                    if (!Array.isArray(data) || data.length === 0) {
+                        hasMore = false;
+                        break;
                     }
-                    const results = await Promise.all(promises);
-                    results.forEach(json => {
-                        if (json.data && json.data.diff) {
-                            allData.push(...json.data.diff);
-                        }
+                    
+                    // 转换为东方财富格式，保持字段兼容
+                    data.forEach(s => {
+                        const symbol = s.symbol || '';
+                        const code = symbol.replace(/^(sh|sz)/, '');
+                        allData.push({
+                            f12: code,           // 代码
+                            f14: s.name || '',   // 名称
+                            f3: s.changepercent || 0,  // 涨跌幅
+                            f2: s.trade || 0,     // 现价
+                            f4: s.pricechange || 0, // 涨跌额
+                            f5: s.volume || 0,    // 成交量
+                            f6: s.amount || 0,    // 成交额
+                            f8: s.turnoverratio || 0, // 换手率
+                            f15: s.high || 0,     // 最高
+                            f16: s.low || 0,      // 最低
+                            f17: s.open || 0,     // 开盘
+                            f62: 0,               // 主力净流入（暂无）
+                        });
                     });
+                    
+                    console.log(`[新浪] 第${page}页，获取${data.length}只，累计${allData.length}只`);
+                    page++;
+                    
+                    if (data.length < pageSize) hasMore = false;
+                    if (allData.length >= 5000) hasMore = false; // 限制获取数量
                 }
                 
                 console.log('获取到数据量:', allData.length);
                 
-                // 获取PE/PB/ROE/股息率
-                // 腾讯API字段: 39=PE, 46=PB, 64=股息率(%), 66=ROE(%)
+                // ── 用腾讯 qt.gtimg.cn 批量获取 PE/PB/股息率 ──
+                document.getElementById('screenResult').innerHTML = '<tr><td colspan="19" class="loading"><div class="spinner"></div>正在获取 PE/PB/股息率...</td></tr>';
                 const qtDataMap = {};
-                console.log('正在获取腾讯API数据(PE/PB/ROE/股息率)...');
+                const qtBatch = 50;
+                let qtSuccessCount = 0;
+                let qtFailCount = 0;
                 
-                const batchSize = 100;
-                const stockCount = Math.min(allData.length, 3000);
-                const batches = Math.ceil(stockCount / batchSize);
-                
-                for (let b = 0; b < batches; b++) {
-                    const start = b * batchSize;
-                    const end = Math.min(start + batchSize, stockCount);
-                    const batch = allData.slice(start, end);
-                    
-                    const prefixes = batch.map(s => s.f12.startsWith('6') ? 'sh' + s.f12 : 'sz' + s.f12).join(',');
+                for (let i = 0; i < allData.length; i += qtBatch) {
+                    const batch = allData.slice(i, i + qtBatch);
+                    const symbols = batch.map(s => 'sh' + s.f12).join('~');
+                    const url = 'https://qt.gtimg.cn/q=' + symbols;
                     
                     try {
-                        const resp = await fetch(`https://qt.gtimg.cn/q=${prefixes}`);
-                        const text = await resp.text();
-                        
-                        const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                        let match;
-                        while ((match = regex.exec(text)) !== null) {
-                            const code = match[2];
-                            const fields = match[3].split('~');
-                            qtDataMap[code] = {
-                                pe: parseFloat(fields[39]) || 0,       // 字段39=PE
-                                pb: parseFloat(fields[46]) || 0,       // 字段46=PB
-                                roe: parseFloat(fields[66]) || 0,      // 字段66=ROE
-                                dividend: parseFloat(fields[64]) || 0   // 字段64=股息率
-                            };
+                        const text = await fetchWithReferer(url);
+                        if (text && text.length > 50) {
+                            text.trim().split('\n').forEach(line => {
+                                const m = line.match(/="([^"]+)"/);
+                                if (!m) return;
+                                const parts = m[1].split('~');
+                                if (parts.length < 50) return;
+                                const code = parts[0].replace(/^(sh|sz)/, '');
+                                qtDataMap[code] = {
+                                    pe:       parseFloat(parts[39]) || null,
+                                    pb:       parseFloat(parts[46]) || null,
+                                    roe:      parseFloat(parts[37]) || null,
+                                    dividend: parseFloat(parts[36]) || null,
+                                };
+                            });
+                            qtSuccessCount++;
+                        } else {
+                            qtFailCount++;
                         }
-                    } catch(e) {}
+                    } catch(e) {
+                        qtFailCount++;
+                        console.warn(`[腾讯] 第${i/qtBatch + 1}批失败:`, e.message);
+                    }
+                    
+                    console.log(`[腾讯] 进度 ${Math.min(i + qtBatch, allData.length)}/${allData.length}, 成功${qtSuccessCount}批/失败${qtFailCount}批`);
                 }
-                
-                console.log('腾讯API数据获取成功:', Object.keys(qtDataMap).length);
-                
-                // 对关键股票单独获取（确保不遗漏）
-                const keyStocks = ['600519', '601668', '000858', '601318', '600036'];
-                const missingStocks = keyStocks.filter(code => !qtDataMap[code]);
-                
-                if (missingStocks.length > 0) {
-                    console.log('补充获取:', missingStocks);
-                    try {
-                        const prefixes = missingStocks.map(code => code.startsWith('6') ? 'sh' + code : 'sz' + code).join(',');
-                        const resp = await fetch(`https://qt.gtimg.cn/q=${prefixes}`);
-                        const text = await resp.text();
-                        const regex = /v_(sh|sz)(\w+)="([^"]+)"/g;
-                        let match;
-                        while ((match = regex.exec(text)) !== null) {
-                            const code = match[2];
-                            const fields = match[3].split('~');
-                            qtDataMap[code] = {
-                                pe: parseFloat(fields[39]) || 0,
-                                pb: parseFloat(fields[46]) || 0,
-                                roe: parseFloat(fields[66]) || 0,
-                                dividend: parseFloat(fields[64]) || 0
-                            };
-                        }
-                    } catch(e) {}
+                console.log('[腾讯] 完成，共获取', Object.keys(qtDataMap).length, '只的PE/PB数据');
                 }
-                
-                // 验证关键股票数据
-                console.log('贵州茅台600519:', qtDataMap['600519']);
-                console.log('中国建筑601668:', qtDataMap['601668']);
+                console.log('[腾讯] qtDataMap 样本:', qtDataMap['600519'], qtDataMap['000001']);
                 
                 screenData = allData.map(i => {
                     const qt = qtDataMap[i.f12] || {};
@@ -765,18 +909,16 @@
                         code: i.f12, name: i.f14, price: i.f2, changePct: i.f3,
                         change: i.f4, turnover: i.f8, vol: i.f5, amount: i.f6,
                         high: i.f15, low: i.f16, open: i.f17,
-                        pe: qt.pe || 0,             // 腾讯API字段39
-                        pb: qt.pb || 0,             // 腾讯API字段46
-                        roe: qt.roe || 0,           // 腾讯API字段66
-                        dividend: qt.dividend || 0,  // 腾讯API字段64
-                        revenueGrowth: null,   // f184 - 营收增速(通过detail API补充)
-                        mainFlowAmt: (parseFloat(i.f62) || 0) / 10000, // 主力净流入(万元)
-                        // 财务详情字段(通过东方财富detail API补充)
-                        // f173=ROE, f184=营收增速, f185=净利增速, f186=毛利率, f187=净利率, f188=负债率
-                        profitGrowth: null,  // f185
-                        grossMargin: null,   // f186
-                        netMargin: null,     // f187
-                        debtRatio: null,     // f188
+                        pe:       qt.pe       ?? null,
+                        pb:       qt.pb       ?? null,
+                        roe:      qt.roe      ?? null,
+                        dividend: qt.dividend ?? null,
+                        revenueGrowth: null,
+                        mainFlowAmt: (parseFloat(i.f62) || 0) / 10000,
+                        profitGrowth: null,
+                        grossMargin:  null,
+                        netMargin:    null,
+                        debtRatio:    null,
                     };
                 });
                 
@@ -790,44 +932,78 @@
                 document.getElementById('screenCount').textContent = `找到 ${filteredData.length} 只 (共 ${screenData.length} 只) ⏳财务数据加载中...`;
                 renderScreenResult(filteredData);
                 
-                // 第二步：对当前结果补充财务详情（毛利率/净利率/净利增速/负债率）
-                const toFetch = filteredData.slice(0, 300);
-                const finBatch = 10;
+                // 判断用户是否设置了财务类筛选条件
+                const hasFinFilter = ['profitGrowthMin','profitGrowthMax','revenueGrowthMin','revenueGrowthMax',
+                    'grossMarginMin','grossMarginMax','netMarginMin','netMarginMax',
+                    'debtRatioMin','debtRatioMax'].some(id => {
+                    const v = document.getElementById(id).value;
+                    return v !== '' && v !== null;
+                });
+
+                // ── 第二步：对显示的前100只补充毛利率/净利率/负债率/增长率 ──
+                // 使用东方财富 EASTMONEY_STOCK（通过CORS代理）
+                const toFetch = filteredData.slice(0, 100);
+                const finBatch = 5; // 每批5只并行
                 for (let fb = 0; fb < Math.ceil(toFetch.length / finBatch); fb++) {
                     const batch = toFetch.slice(fb * finBatch, (fb + 1) * finBatch);
-                    // 顺序请求并保持序号对应（避免f12字段在财务API中不存在导致匹配失败）
-                    for (let i = 0; i < batch.length; i++) {
-                        const s = batch[i];
-                        const secid = s.code.startsWith('6') ? '1.' + s.code : '0.' + s.code;
+                    await Promise.all(batch.map(async (s) => {
                         try {
-                            const resp = await fetch(`${API.EASTMONEY_STOCK}?secid=${secid}&fields=f173,f184,f185,f186,f187,f188`);
-                            const json = await resp.json();
-                            if (json && json.data) {
-                                const d = json.data;
-                                s.roe = parseFloat(d.f173) || s.roe || 0;
-                                s.revenueGrowth = parseFloat(d.f184) || 0;     // 营收增速=f184
-                                s.profitGrowth = parseFloat(d.f185) || 0;      // 净利增速=f185
-                                s.grossMargin = parseFloat(d.f186) || 0;       // 毛利率=f186
-                                s.netMargin = parseFloat(d.f187) || 0;         // 净利率=f187
-                                s.debtRatio = parseFloat(d.f188) || 0;          // 负债率=f188
+                            const market = s.code.startsWith('6') ? '1' : '0';
+                            const emUrl = `${API.EASTMONEY_STOCK}?ut=fa5fd1943c7b386f172d6893dbfba10b&invt=2&fltt=2&fields=f10,f14,f12,f13,f15,f16,f17,f18&secid=${market}.${s.code}`;
+                            const emJson = await proxyFetch(emUrl);
+                            if (emJson?.data) {
+                                const d = emJson.data;
+                                s.grossMargin   = parseFloat(d.f29) || null;  // 毛利率
+                                s.netMargin     = parseFloat(d.f30) || null;  // 净利率
+                                s.debtRatio     = parseFloat(d.f173) || null; // 负债率
+                                s.revenueGrowth = parseFloat(d.f24) || null;  // 营收增长
+                                s.profitGrowth  = parseFloat(d.f25) || null;  // 净利增长
                             }
-                        } catch(e) {}
-                    }
-                    // 每批完成刷新一次
+                        } catch(e) {
+                            console.warn('[东方财富] 详情获取失败:', e.message);
+                        }
+                    }));
+                    console.log(`[东方财富] 财务数据进度: ${Math.min((fb+1)*finBatch, toFetch.length)}/${toFetch.length}`);
+                    // 每批完成实时刷新
                     renderScreenResult(filteredData);
                 }
-                
-                // 补充完成后重新应用含财务条件的筛选
-                filteredData = applyFilters(screenData.map(s => {
-                    const updated = filteredData.find(x => x.code === s.code);
-                    return updated || s;
-                }));
+
+                // 第三步：财务数据加载完成后重新严格筛选
+                if (hasFinFilter) {
+                    // 用户有财务条件：对前300只重新严格筛选（null视为无数据，不放行）
+                    const strictFilter = (val, min, max) => {
+                        if (min === -Infinity && max === Infinity) return true;
+                        if (val === null || isNaN(val)) return false; // 财务数据缺失 → 不通过
+                        return val >= min && val <= max;
+                    };
+                    const getV = (id, def) => {
+                        const v = document.getElementById(id).value;
+                        return v === '' ? def : (parseFloat(v) ?? def);
+                    };
+                    const pgMin = getV('profitGrowthMin', -Infinity),  pgMax = getV('profitGrowthMax', Infinity);
+                    const rgMin = getV('revenueGrowthMin', -Infinity), rgMax = getV('revenueGrowthMax', Infinity);
+                    const gmMin = getV('grossMarginMin', -Infinity),   gmMax = getV('grossMarginMax', Infinity);
+                    const nmMin = getV('netMarginMin', -Infinity),     nmMax = getV('netMarginMax', Infinity);
+                    const drMin = getV('debtRatioMin', -Infinity),     drMax = getV('debtRatioMax', Infinity);
+
+                    filteredData = toFetch.filter(s =>
+                        strictFilter(s.profitGrowth,  pgMin, pgMax) &&
+                        strictFilter(s.revenueGrowth, rgMin, rgMax) &&
+                        strictFilter(s.grossMargin,   gmMin, gmMax) &&
+                        strictFilter(s.netMargin,     nmMin, nmMax) &&
+                        strictFilter(s.debtRatio,     drMin, drMax)
+                    );
+                } else {
+                    // 用户没有财务条件：直接用前300只
+                    filteredData = toFetch;
+                }
+
                 filteredData = filteredData.sort((a, b) => b.changePct - a.changePct);
                 document.getElementById('screenCount').textContent = `找到 ${filteredData.length} 只 (共 ${screenData.length} 只)`;
                 renderScreenResult(filteredData);
             } catch (e) {
                 console.error('选股失败:', e);
-                document.getElementById('screenResult').innerHTML = '<tr><td colspan="17" class="loading">加载失败: ' + e.message + '<br><small style="color:#999">请检查网络连接后按F12查看控制台详情</small></td></tr>';
+                document.getElementById('screenResult').innerHTML = '<tr><td colspan="19" class="loading">加载失败: ' + e.message + '<br><small style="color:#999">请检查网络连接后按F12查看控制台详情</small></td></tr>';
             }
         }
         
@@ -869,52 +1045,314 @@
             const mainFlowSel = document.getElementById('mainFlow').value;
             
             return data.filter(s => {
-                const pe = parseFloat(s.pe) || 0;
-                const pb = parseFloat(s.pb) || 0;
-                const roe = parseFloat(s.roe) || 0;
-                const dividend = parseFloat(s.dividend) || 0;
-                const turnover = parseFloat(s.turnover) || 0;
-                const amount = (parseFloat(s.amount) || 0) / 10000;
-                const profitGrowth = parseFloat(s.profitGrowth) ?? null;
-                const revenueGrowth = parseFloat(s.revenueGrowth) ?? null;
-                const grossMargin = parseFloat(s.grossMargin) ?? null;
-                const netMargin = parseFloat(s.netMargin) ?? null;
-                const debtRatio = parseFloat(s.debtRatio) ?? null;
-                const mainFlowAmt = parseFloat(s.mainFlowAmt) || 0;
+                // 安全解析数值：null/undefined → null（未加载），NaN → null（无数据/解析失败），其他转为数字
+                // 支持带中文单位后缀的字符串（万、亿）
+                const safeNum = (v) => {
+                    if (v === null || v === undefined) return null;
+                    const s = String(v).trim();
+                    if (s === '' || s === '--' || s === '-') return null;
+                    // 移除中文单位后缀（万、亿）
+                    const numStr = s.replace(/万$/, '').replace(/亿$/, '');
+                    const n = parseFloat(numStr);
+                    if (isNaN(n)) return null;  // 解析失败，返回null（未加载）
+                    return n;
+                };
+                const pe = safeNum(s.pe);
+                const pb = safeNum(s.pb);
+                const roe = safeNum(s.roe);
+                const dividend = safeNum(s.dividend);
+                const turnover = safeNum(s.turnover);
+                const amount = safeNum(s.amount);  // 东方财富f6单位已经是万元
+                const changePct = safeNum(s.changePct);
+                
+                // 通用范围检查：null/NaN值表示未加载，放行；否则检查范围
+                const inRange = (val, min, max) => {
+                    if (val === null || val === undefined || isNaN(val)) return true;  // 未加载，放行
+                    return val >= min && val <= max;
+                };
+                
+                // 安全解析东方财富财务数据：null/undefined → null，NaN/无效值 → null
+                const safeParse = (v) => {
+                    if (v === null || v === undefined) return null;
+                    const n = parseFloat(v);
+                    return isNaN(n) ? null : n;
+                };
+                const profitGrowth = safeParse(s.profitGrowth);
+                const revenueGrowth = safeParse(s.revenueGrowth);
+                const grossMargin = safeParse(s.grossMargin);
+                const netMargin = safeParse(s.netMargin);
+                const debtRatio = safeParse(s.debtRatio);
+                const mainFlowAmt = safeParse(s.mainFlowAmt) ?? 0;
                 
                 // 主力净流入方向(旧逻辑)
                 if (mainFlowSel === 'positive' && mainFlowAmt <= 0) return false;
                 if (mainFlowSel === 'negative' && mainFlowAmt >= 0) return false;
                 
-                // 财务条件：null=尚未加载(放行)，0=无数据(有约束时排除)
+                // 财务条件：null=尚未加载(放行)，0=有效数据(参与筛选)
                 const checkRange = (val, min, max) => {
                     if (min === -Infinity && max === Infinity) return true; // 未设置条件
                     if (val === null) return true;  // 数据未加载，先放行
-                    if (val === 0) return false;     // 明确为0(无数据)时排除
                     return val >= min && val <= max;
                 };
                 
-                return pe >= peMin && pe <= peMax
-                    && pb >= pbMin && pb <= pbMax
-                    && roe >= roeMin && roe <= roeMax
-                    && dividend >= divYieldMin && dividend <= divYieldMax
-                    && s.changePct >= changePctMin && s.changePct <= changePctMax
-                    && turnover >= turnoverMin && turnover <= turnoverMax
-                    && amount >= amountMin && amount <= amountMax
-                    && checkRange(profitGrowth, profitGrowthMin, profitGrowthMax)
-                    && checkRange(revenueGrowth, revenueGrowthMin, revenueGrowthMax)
-                    && checkRange(grossMargin, grossMarginMin, grossMarginMax)
-                    && checkRange(netMargin, netMarginMin, netMarginMax)
-                    && checkRange(debtRatio, debtRatioMin, debtRatioMax)
-                    && checkRange(mainFlowAmt, mainFlowAmtMin, mainFlowAmtMax);
+                const c1 = inRange(pe, peMin, peMax);
+                const c2 = inRange(pb, pbMin, pbMax);
+                const c3 = inRange(roe, roeMin, roeMax);
+                const c4 = inRange(dividend, divYieldMin, divYieldMax);
+                const c5 = inRange(changePct, changePctMin, changePctMax);
+                const c6 = inRange(turnover, turnoverMin, turnoverMax);
+                const c7 = inRange(amount, amountMin, amountMax);
+                const c8 = checkRange(profitGrowth, profitGrowthMin, profitGrowthMax);
+                const c9 = checkRange(revenueGrowth, revenueGrowthMin, revenueGrowthMax);
+                const c10 = checkRange(grossMargin, grossMarginMin, grossMarginMax);
+                const c11 = checkRange(netMargin, netMarginMin, netMarginMax);
+                const c12 = checkRange(debtRatio, debtRatioMin, debtRatioMax);
+                const c13 = checkRange(mainFlowAmt, mainFlowAmtMin, mainFlowAmtMax);
+                
+                return c1 && c2 && c3 && c4 && c5 && c6 && c7 && c8 && c9 && c10 && c11 && c12 && c13;
             });
         }
         
-        function loadHotStocks() {
-            document.getElementById('changePctMin').value = 5;
-            document.getElementById('changePctMax').value = 20;
-            document.getElementById('turnoverMin').value = 3;
-            startScreen();
+        // ==================== 强势股选股（8条件） ====================
+        async function loadHotStocks() {
+            const btn = event ? event.target : null;
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ 分析中...'; }
+
+            const resultEl = document.getElementById('screenResult');
+            const countEl  = document.getElementById('screenCount');
+            resultEl.innerHTML = '<tr><td colspan="19" class="loading"><div class="spinner"></div>Step 1/4 拉取全市场行情...</td></tr>';
+            countEl.textContent = '强势股分析中...';
+
+            try {
+                // ── Step 1: 拉全市场基础行情（东方财富，通过CORS代理） ────────
+                const allData = [];
+                const pageSize = 100;
+                const listUrl = `${API.EASTMONEY_LIST}?pn=1&pz=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12`;
+                const totalJson = await proxyFetch(listUrl);
+                const total = totalJson?.data?.total || 100;
+                const totalPages = Math.ceil(total / pageSize);
+
+                const batchPages = 5;
+                for (let batch = 0; batch < totalPages; batch += batchPages) {
+                    const promises = [];
+                    for (let i = 0; i < batchPages && (batch + i) < totalPages; i++) {
+                        const page = batch + i + 1;
+                        const url = `${API.EASTMONEY_LIST}?pn=${page}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f10,f15,f16,f17,f18,f62`;
+                        promises.push(proxyFetch(url).catch(() => ({ data: null })));
+                    }
+                    const results = await Promise.all(promises);
+                    results.forEach(json => {
+                        if (json?.data?.diff) allData.push(...json.data.diff);
+                    });
+                }
+
+                console.log('[强势股] Step1获取行情总数:', allData.length, '页数:', totalPages);
+                resultEl.innerHTML = `<tr><td colspan="19" class="loading"><div class="spinner"></div>Step 2/4 初筛候选股 (${allData.length}只)...</td></tr>`;
+
+                // ── Step 2: 初筛（换手率≥1%，成交额≥5000万，主力净流入≥0） ──
+                const candidates = allData.filter(s => {
+                    const turnover   = parseFloat(s.f8)  || 0;
+                    const amount     = parseFloat(s.f6)  || 0;   // 东方财富单位：元
+                    const mainFlow   = parseFloat(s.f62) || 0;   // 主力净流入：元
+                    return turnover >= 1 && amount >= 50000000 && mainFlow >= 0;
+                });
+                console.log('[强势股] 初筛后候选股:', candidates.length);
+
+                resultEl.innerHTML = `<tr><td colspan="19" class="loading"><div class="spinner"></div>Step 3/4 拉取K线数据分析8个条件 (候选 ${candidates.length} 只，预计需要 ${Math.ceil(candidates.length/10)*2}s)...</td></tr>`;
+
+                // ── Step 3: 对候选股批量拉K线，计算8条件 ──────────────────────
+                const passed = [];
+                const kBatch = 10; // 每批10只并行
+                let klineOk = 0, klineFail = 0;
+
+                for (let b = 0; b < candidates.length; b += kBatch) {
+                    const batch = candidates.slice(b, b + kBatch);
+
+                    // 通过CORS代理访问东方财富K线
+                    const klineResults = await Promise.all(
+                        batch.map(s => {
+                            const secid = s.f12.startsWith('6') ? '1.' + s.f12 : '0.' + s.f12;
+                            const url = `${API.EASTMONEY_KLINE}?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56&klt=101&fqt=1&lmt=30&end=20500101`;
+                            return proxyFetch(url);
+                        })
+                    );
+
+                    klineResults.forEach((result, idx) => {
+                        const s = batch[idx];
+                        if (!result?.data?.klines || result.data.klines.length < 22) {
+                            klineFail++;
+                            return;
+                        }
+                        klineOk++;
+                        const klines = result.data.klines.map(k => {
+                            const p = k.split(',');
+                            return {
+                                date:  p[0], open: parseFloat(p[1]), close: parseFloat(p[2]),
+                                high:  parseFloat(p[3]), low: parseFloat(p[4]), vol: parseFloat(p[5])
+                            };
+                        });
+
+                        const len     = klines.length;
+                        const closes  = klines.map(k => k.close);
+                        const vols    = klines.map(k => k.vol);
+                        const today   = klines[len - 1];
+                        const prev5   = klines[len - 6]; // 5日前
+
+                        // ─ 计算均线 ─────────────────────────────────────────
+                        const maCalc = (arr, n, i) => {
+                            if (i < n - 1) return null;
+                            let sum = 0;
+                            for (let j = i - n + 1; j <= i; j++) sum += arr[j];
+                            return sum / n;
+                        };
+
+                        const ma5  = maCalc(closes, 5,  len - 1);
+                        const ma10 = maCalc(closes, 10, len - 1);
+                        const ma20 = maCalc(closes, 20, len - 1);
+                        // 前一日MA20（判断MA20是否向上）
+                        const ma20_prev = maCalc(closes, 20, len - 2);
+
+                        if (!ma5 || !ma10 || !ma20 || !ma20_prev) return;
+
+                        // ── 条件1: 股价 > 20日均线 ────────────────────────────
+                        const c1 = today.close > ma20;
+
+                        // ── 条件2: 20日均线向上（今日MA20 > 前日MA20） ─────────
+                        const c2 = ma20 > ma20_prev;
+
+                        // ── 条件3: 近5日涨幅 > 5% ─────────────────────────────
+                        const rise5 = prev5.close > 0 ? (today.close - prev5.close) / prev5.close * 100 : 0;
+                        const c3 = rise5 > 5;
+
+                        // ── 条件4: 近10日内出现过涨停/接近涨停（单日涨幅≥9%) ──
+                        const c4 = klines.slice(len - 10).some((k, i, arr) => {
+                            if (i === 0) return false;
+                            const prevClose = arr[i - 1].close;
+                            if (prevClose <= 0) return false;
+                            return (k.close - prevClose) / prevClose * 100 >= 9;
+                        });
+
+                        // ── 条件5: 回踩MA5（收盘价 ≤ MA5 * 1.02，即距MA5<2%） ─
+                        const ma5Dist = Math.abs(today.close - ma5) / ma5;
+                        const c5 = ma5Dist < 0.02;
+
+                        // ── 条件6: 成交量缩量（今日成交量 < 5日均量） ──────────
+                        const vol5avg = vols.slice(len - 6, len - 1).reduce((a, b) => a + b, 0) / 5;
+                        const c6 = today.vol < vol5avg;
+
+                        // ── 条件7: 主力净流入为正（东方财富f62即今日主力净流入） ─
+                        const mainFlow = parseFloat(s.f62) || 0;
+                        const c7 = mainFlow > 0;
+
+                        // ── 条件8: 近3日连阳（收盘≥开盘，大单持续流入代理）──────
+                        const c8 = klines.slice(len - 3).every(k => k.close >= k.open);
+
+                        // ══════════════════════════════════════════════════════
+                        // 加权评分 score = 0.25*趋势 + 0.25*强度 + 0.20*回调 + 0.15*成交量 + 0.15*资金
+                        // ══════════════════════════════════════════════════════
+                        const ma10_prev = maCalc(closes, 10, len - 2);
+                        const ma5_prev  = maCalc(closes, 5,  len - 2);
+
+                        // 趋势 (0~1)：MA多头排列 + 向上斜率
+                        const trendAlign = (ma5 > ma10 && ma10 > ma20) ? 0.4 : (ma5 > ma20 ? 0.2 : 0);
+                        const trendUp    = (c2 ? 0.35 : 0)
+                                         + (ma10_prev && ma10 > ma10_prev ? 0.15 : 0)
+                                         + (ma5_prev  && ma5  > ma5_prev  ? 0.10 : 0);
+                        const s_trend = Math.min(trendAlign + trendUp + (c1 ? 0 : -0.2), 1);
+
+                        // 强度 (0~1)：近5日涨幅，10%满分
+                        const s_strength = Math.min(Math.max(rise5 / 10, 0), 1);
+
+                        // 回调 (0~1)：越贴近MA5分越高（2%内线性衰减）
+                        const s_pullback = Math.max(1 - ma5Dist / 0.02, 0);
+
+                        // 成交量 (0~1)：缩量越明显分越高（相对5日均量）
+                        const volRatio   = vol5avg > 0 ? today.vol / vol5avg : 1;
+                        const s_vol      = Math.max(1 - volRatio, 0);
+
+                        // 资金 (0~1)：主力净流入占当日成交额比例，20%满分
+                        const amount = parseFloat(s.f6) || 1;
+                        const s_capital = Math.min(Math.max(mainFlow / (amount * 0.2), 0), 1);
+
+                        const weightedScore = parseFloat((
+                            0.25 * s_trend   +
+                            0.25 * s_strength +
+                            0.20 * s_pullback +
+                            0.15 * s_vol      +
+                            0.15 * s_capital
+                        ).toFixed(4));
+
+                        // ── 原8条件布尔评分 ────────────────────────────────────
+                        const boolScore = [c1,c2,c3,c4,c5,c6,c7,c8].filter(Boolean).length;
+
+                        // ── 候选标记条件（用户指定的7项硬条件） ──────────────────
+                        const isCandidate = c1 && c2 && c3 && c4 && c5 && c6 && c7;
+
+                        // ── 入选：硬条件 + 加权评分 > 0.45，或 布尔评分≥5 ──────
+                        const mustPass = c1 && c2 && c3;
+                        if (mustPass && (weightedScore > 0.45 || boolScore >= 5)) {
+                            passed.push({
+                                code: s.f12, name: s.f14,
+                                price: s.f2, changePct: s.f3,
+                                change: s.f4, turnover: s.f8,
+                                vol: s.f5, amount: s.f6,
+                                high: s.f15, low: s.f16, open: s.f17,
+                                pe: null, pb: null, roe: null, dividend: null,
+                                profitGrowth: null, revenueGrowth: null,
+                                grossMargin: null, netMargin: null, debtRatio: null,
+                                mainFlowAmt: mainFlow / 10000,
+                                _score: boolScore,
+                                _wscore: weightedScore,
+                                _candidate: isCandidate,
+                                _detail: [
+                                    `①MA20↑:${c1?'✓':'✗'}`,`②趋势↑:${c2?'✓':'✗'}`,`③5日涨${rise5.toFixed(1)}%:${c3?'✓':'✗'}`,
+                                    `④涨停:${c4?'✓':'✗'}`,`⑤贴MA5(${(ma5Dist*100).toFixed(1)}%):${c5?'✓':'✗'}`,
+                                    `⑥缩量(${(volRatio*100).toFixed(0)}%均量):${c6?'✓':'✗'}`,`⑦主力+:${c7?'✓':'✗'}`,`⑧3连阳:${c8?'✓':'✗'}`,
+                                    `加权=${weightedScore.toFixed(3)}(趋势${s_trend.toFixed(2)}|强度${s_strength.toFixed(2)}|回调${s_pullback.toFixed(2)}|量${s_vol.toFixed(2)}|资金${s_capital.toFixed(2)})`,
+                                    isCandidate ? '⭐候选' : ''
+                                ].join(' '),
+                                _ma5: ma5, _ma10: ma10, _ma20: ma20, _rise5: rise5,
+                            });
+                        }
+                    });
+
+                    // 每批结束更新进度
+                    const progress = Math.min(b + kBatch, candidates.length);
+                    resultEl.innerHTML = `<tr><td colspan="19" class="loading"><div class="spinner"></div>Step 3/4 K线分析中 ${progress}/${candidates.length}，已找到 ${passed.length} 只...</td></tr>`;
+                }
+                console.log('[强势股] K线获取成功:', klineOk, '失败:', klineFail, '通过8条件:', passed.length);
+
+                // ── Step 4: 按加权评分排序 ────────────────────────────────
+                passed.sort((a, b) => {
+                    // 候选股优先
+                    if (b._candidate !== a._candidate) return b._candidate ? 1 : -1;
+                    // 然后按加权评分
+                    if (b._wscore !== a._wscore) return b._wscore - a._wscore;
+                    return b._rise5 - a._rise5;
+                });
+
+                const candidateCount = passed.filter(p => p._candidate).length;
+                screenData   = passed;
+                filteredData = passed;
+                countEl.textContent = `🔥 强势股 ${passed.length} 只 (⭐候选 ${candidateCount}，初选 ${candidates.length}，全市场 ${allData.length})`;
+                renderScreenResult(passed);
+
+                // 在表格上方追加条件说明
+                const tbody = document.getElementById('screenResult');
+                const infoRow = document.createElement('tr');
+                infoRow.innerHTML = `<td colspan="19" style="padding:8px 12px;background:#1a2332;font-size:11px;color:#8b949e;">
+                    🎯 <b style="color:#f0a500">加权评分</b> = 0.25×趋势 + 0.25×强度 + 0.20×回调 + 0.15×成交量 + 0.15×资金 &nbsp;|&nbsp;
+                    ⭐候选条件：①股价>MA20 ②MA20↑ ③5日涨>5% ④曾涨停 ⑤贴近MA5(2%内) ⑥缩量 ⑦主力净流入+
+                    &nbsp;&nbsp;|&nbsp;&nbsp;鼠标悬停行可见各条件详情（F12控制台）
+                </td>`;
+                tbody.insertBefore(infoRow, tbody.firstChild);
+
+            } catch(e) {
+                console.error('强势股选股失败:', e);
+                resultEl.innerHTML = `<tr><td colspan="19" class="loading">加载失败: ${e.message}</td></tr>`;
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = '🔥 近期强势'; }
+            }
         }
         
         function loadVolumeStocks() {
@@ -965,7 +1403,7 @@
         function renderScreenResult(data) {
             const tbody = document.getElementById('screenResult');
             if (data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="17" class="loading">没有符合条件的数据</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="19" class="loading">没有符合条件的数据</td></tr>';
                 return;
             }
             
@@ -974,9 +1412,13 @@
                 let va = a[screenSortField], vb = b[screenSortField];
                 if (va == null || va === '--') va = screenSortDir === 'asc' ? Infinity : -Infinity;
                 if (vb == null || vb === '--') vb = screenSortDir === 'asc' ? Infinity : -Infinity;
-                if (typeof va === 'string') {
+                // 字符串排序
+                if (typeof va === 'string' && typeof vb === 'string') {
                     return screenSortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
                 }
+                // 数值排序
+                va = Number(va) || 0;
+                vb = Number(vb) || 0;
                 return screenSortDir === 'asc' ? va - vb : vb - va;
             });
             
@@ -987,7 +1429,7 @@
                 const fmt = (v, unit='%', dec=2) => v === null ? '<span style="color:#555">...</span>' : (v !== 0 ? Number(v).toFixed(dec) + unit : '--');
                 const fmtColor = (v, unit='%', dec=2) => v === null ? '<span style="color:#555">...</span>' : (v !== 0 ? `<span class="${getColorClass(v)}">${Number(v).toFixed(dec)}${unit}</span>` : '--');
                 return `
-                <tr onclick="showAnalysis('${s.code}')">
+                <tr onclick="showAnalysis('${s.code}')" title="${s._detail || ''}">
                     <td>${s.code}</td>
                     <td>${s.name}</td>
                     <td class="${getColorClass(s.change)}">${s.price || '--'}</td>
@@ -1004,6 +1446,8 @@
                     <td>${fmt(s.netMargin, '%', 1)}</td>
                     <td>${fmt(s.debtRatio, '%', 1)}</td>
                     <td class="${getColorClass(mfa)}">${mfa !== 0 ? (mfa >= 0 ? '+' : '') + mfa.toFixed(0) : '--'}</td>
+                    <td>${s._score != null ? `<span style="color:#f0883e;font-weight:bold">${s._score}/8</span>` : '--'}</td>
+                    <td>${s._wscore != null ? `<span style="color:${s._wscore>0.65?'#3fb950':s._wscore>0.5?'#f0a500':'#8b949e'};font-weight:bold">${s._candidate?'⭐':''}${(s._wscore*100).toFixed(1)}</span>` : '--'}</td>
                     <td><button class="btn btn-secondary btn-small" onclick="event.stopPropagation();quickAddWatch('${s.code}','${s.name}')">+自选</button></td>
                 </tr>`;
             }).join('');
@@ -1033,14 +1477,15 @@
                 pe:'PE', pb:'PB', roe:'ROE', dividend:'股息率',
                 profitGrowth:'净利增长', revenueGrowth:'营收增长',
                 grossMargin:'毛利率', netMargin:'净利率',
-                debtRatio:'负债率', mainFlowAmt:'主力净流入(万)'
+                debtRatio:'负债率', mainFlowAmt:'主力净流入(万)',
+                _score:'评分', _wscore:'加权分'
             };
             return map[field] || field;
         }
         
         function exportScreenResult() {
             if (filteredData.length === 0) return alert('没有数据可导出');
-            const rows = [['代码','名称','现价','涨跌幅','涨跌额','换手率','成交量','成交额','PE','PB','ROE','股息率','净利增长','营收增长','毛利率','净利率','负债率','主力净流入(万)']];
+            const rows = [['代码','名称','现价','涨跌幅','涨跌额','换手率','成交量','成交额','PE','PB','ROE','股息率','净利增长','营收增长','毛利率','净利率','负债率','主力净流入(万)','评分','加权分']];
             filteredData.forEach(s => rows.push([
                 s.code, s.name, s.price, s.changePct+'%', s.change, s.turnover+'%',
                 s.vol, formatVol(s.amount),
@@ -1052,7 +1497,9 @@
                 s.grossMargin>0?Number(s.grossMargin).toFixed(1)+'%':'',
                 s.netMargin>0?Number(s.netMargin).toFixed(1)+'%':'',
                 s.debtRatio>0?Number(s.debtRatio).toFixed(1)+'%':'',
-                s.mainFlowAmt?Number(s.mainFlowAmt).toFixed(0):''
+                s.mainFlowAmt?Number(s.mainFlowAmt).toFixed(0):'',
+                s._score!=null?s._score+'/8':'',
+                s._wscore!=null?(s._candidate?'⭐':'')+( s._wscore*100).toFixed(1):''
             ]));
             const csv = rows.map(r => r.join(',')).join('\n');
             const blob = new Blob(['\ufeff' + csv], { type: 'text/csv' });
@@ -1076,8 +1523,8 @@
             
             try {
                 const codes = watchlist.map(s => getPrefix(s.code)).join(',');
-                const resp = await fetch(API.SINA_HQ + codes);
-                const text = await resp.text();
+                const text = await fetchWithReferer(API.SINA_HQ + codes);
+                if (!text) throw new Error('Sina API failed');
                 const stocks = parseSinaData(text);
                 
                 let upCount = 0, downCount = 0, totalChange = 0;
@@ -1194,9 +1641,8 @@
                 let stocks = [];
                 
                 if (codes) {
-                    const resp = await fetch(API.SINA_HQ + codes);
-                    const text = await resp.text();
-                    stocks = parseSinaData(text);
+                    const text = await fetchWithReferer(API.SINA_HQ + codes);
+                    stocks = text ? parseSinaData(text) : [];
                 }
                 
                 let totalValue = 0, totalCost = 0;
@@ -1297,9 +1743,8 @@
             // 获取实时价格
             try {
                 const codes = alerts.map(a => getPrefix(a.code)).join(',');
-                const resp = await fetch(API.SINA_HQ + codes);
-                const text = await resp.text();
-                const stocks = parseSinaData(text);
+                const text = await fetchWithReferer(API.SINA_HQ + codes);
+                const stocks = text ? parseSinaData(text) : [];
                 
                 list.innerHTML = alerts.map(alert => {
                     const stock = stocks.find(s => s.code === alert.code) || {};
@@ -1362,10 +1807,9 @@
             tb.innerHTML = '<tr><td colspan="9" class="loading"><div class="spinner"></div>加载中...</td></tr>';
             
             try {
-                const resp = await fetch(`${API.EASTMONEY_LIST}?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f15,f16,f17`);
-                const json = await resp.json();
+                const json = await proxyFetch(`${API.EASTMONEY_LIST}?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f3,f2,f4,f5,f6,f8,f15,f16,f17`);
                 
-                if (json.data && json.data.diff) {
+                if (json?.data?.diff) {
                     marketData = json.data.diff.map(i => ({
                         code: i.f12, name: i.f14, price: i.f2, changePct: i.f3,
                         change: i.f4, vol: i.f5, amount: i.f6, turnover: i.f8,
@@ -1410,9 +1854,8 @@
             
             // 获取实时数据
             try {
-                const resp = await fetch(API.SINA_HQ + getPrefix(code));
-                const text = await resp.text();
-                const stocks = parseSinaData(text);
+                const text = await fetchWithReferer(API.SINA_HQ + getPrefix(code));
+                const stocks = text ? parseSinaData(text) : [];
                 if (stocks[0]) {
                     document.getElementById('analysisTitle').textContent = stocks[0].name + ' (' + code + ')';
                     document.getElementById('analysisPrice').textContent = stocks[0].price;
@@ -1431,10 +1874,9 @@
                 if (currentPeriod === 'weekly') klt = '102';
                 if (currentPeriod === 'monthly') klt = '103';
                 
-                const resp = await fetch(`${API.EASTMONEY_KLINE}?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&beg=20230101&end=20500101&lmt=120`);
-                const json = await resp.json();
+                const json = await proxyFetch(`${API.EASTMONEY_KLINE}?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=1&beg=20230101&end=20500101&lmt=120`);
                 
-                if (json.data && json.data.klines) {
+                if (json?.data?.klines) {
                     stockKlineData = json.data.klines.map(k => {
                         const p = k.split(',');
                         return { date: p[0], open: parseFloat(p[1]), close: parseFloat(p[2]), high: parseFloat(p[3]), low: parseFloat(p[4]), vol: parseFloat(p[5]) };
